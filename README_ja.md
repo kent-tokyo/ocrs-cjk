@@ -37,6 +37,110 @@ ocrs は現在アーリープレビュー段階です。商用OCRエンジンよ
 
 > **WASM制限:** `OcrEngine::recognize_text` は並列処理に `rayon` を使用しており、`wasm32-unknown-unknown` ではランタイムパニックが発生します。これはアップストリームから引き継いだ既知の問題です。それ以外のAPI（`detect_words`, `find_text_lines`, `cjk_text` ユーティリティ）はWASM互換です。
 
+## 外部モデルを使ったCJK OCR
+
+CJK OCRを実際に動かすには、以下の2つのモデルが必要です：
+
+| ステージ | 役割 | 状態 |
+|---|---|---|
+| **検出モデル** | 画像内のテキスト領域を見つける | ⚠️ ocrs付属のラテン文字学習済みモデルを使用可能（CJK検出精度は未検証）。PaddleOCR形式の検出モデルは未対応 |
+| **認識モデル** | 検出領域の文字を読む | ✅ PaddleOCR ONNX形式に対応済み（3チャンネル入力・バッチファースト出力を自動検出） |
+
+このリポジトリにはCJK学習済みモデルは含まれていません。別途入手する必要があります。
+
+### ステップ1 — 認識モデルのダウンロード
+
+[PP-OCRv5](https://github.com/PaddlePaddle/PaddleOCR) は簡体字中国語・繁体字中国語・日本語・英語を1つのモデルでサポートしています。Hugging Face にONNX変換済みファイルがあります。以下のPythonスクリプトで一度だけ実行してください：
+
+```sh
+pip install huggingface-hub pyyaml
+```
+
+```python
+from huggingface_hub import hf_hub_download
+
+hf_hub_download(
+    repo_id="marsena/paddleocr-onnx-models",
+    filename="PP-OCRv5_server_rec_infer.onnx",
+    local_dir="./models",
+)
+hf_hub_download(
+    repo_id="marsena/paddleocr-onnx-models",
+    filename="PP-OCRv5_server_rec_infer.yml",
+    local_dir="./models",
+)
+```
+
+### ステップ2 — 文字辞書の取り出し
+
+認識モデルはラベルのインデックスを出力します。`OcrEngineParams::alphabet` に対応する文字リストを渡す必要があります。以下のスクリプトで `alphabet.txt` を生成してください：
+
+```python
+import yaml
+
+with open("models/PP-OCRv5_server_rec_infer.yml") as f:
+    cfg = yaml.safe_load(f)
+
+chars = cfg["PostProcess"]["character_dict"]
+
+# 一部のエントリ（国旗絵文字 🇯🇵 など）は2つのUnicodeコードポイントを持ちます。
+# ocrs は1ラベル = 1文字として扱うため、最初のコードポイントに丸めます。
+# これらのエントリはCJK OCRの出力には現れないため実用上の問題はありません。
+fixed = [c[0] if len(c) > 1 else c for c in chars]
+
+# PaddleOCRはデフォルトでスペースラベルを末尾に追加します。
+fixed.append(" ")
+
+with open("models/alphabet.txt", "w", encoding="utf-8") as f:
+    f.write("".join(fixed))
+
+print(f"{len(fixed)} 文字を models/alphabet.txt に書き出しました")
+```
+
+> **確認済み:** PP-OCRv5 は辞書 18383 文字 + スペース = 18384 文字です。
+> `18384 + 1 (CTCブランク) = 18385` がモデルの出力次元と一致します。
+
+### ステップ3 — CLIで実行
+
+ONNXサポートを有効にしてビルドし、`--alphabet-file` で辞書ファイルを渡します（大きな文字セットをシェル引数で渡すとエスケープの問題が起きるため）：
+
+```sh
+cargo build -p ocrs-cli --release --features onnx
+
+./target/release/ocrs \
+  --rec-model  models/PP-OCRv5_server_rec_infer.onnx \
+  --alphabet-file models/alphabet.txt \
+  image.png
+```
+
+### ステップ4 — Rustライブラリとしての使い方
+
+```rust
+use ocrs::{OcrEngine, OcrEngineParams};
+use rten::Model;
+
+// PaddleOCR認識モデルを読み込む（チャンネル数と出力レイアウトは
+// モデルのinput_shapeから自動検出されます）
+let rec_model = Model::load_file("models/PP-OCRv5_server_rec_infer.onnx")?;
+
+// ステップ2で生成した辞書ファイルを読み込む
+let alphabet = std::fs::read_to_string("models/alphabet.txt")?;
+
+let engine = OcrEngine::new(OcrEngineParams {
+    recognition_model: Some(rec_model),
+    // detection_model を省略すると付属のラテン文字学習済みモデルを使用します。
+    alphabet: Some(&alphabet),
+    ..Default::default()
+})?;
+```
+
+### 既知の制限事項
+
+- **検出モデル**: 付属の検出モデルはラテン文字で学習されています。実際には PP-OCRv5 との組み合わせでCJK OCRが動作することを確認済みですが、複雑なレイアウトでの精度は保証されません。PaddleOCR形式の検出モデルへの対応は予定中です。
+- **ONNXフィーチャーフラグ**: `.onnx` ファイルを読み込むには `--features onnx` が必要です（rtenのデフォルト形式は `.rten`）。
+- **WASM**: `recognize_text` は `wasm32-unknown-unknown` でランタイムパニックが発生します（上流の `rayon` の問題）。
+- **アルファベット不一致**: `alphabet` 文字列がモデルの学習辞書と順番・長さが一致しない場合、認識結果が文字化けします。必ずモデルのYAML設定から取り出した辞書を使用してください。
+
 ## CLIのインストール
 
 Rust と Cargo がインストールされていることを確認してから、以下を実行してください：

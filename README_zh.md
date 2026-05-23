@@ -37,6 +37,109 @@ ocrs 目前处于早期预览阶段，识别错误率高于商业 OCR 引擎。
 
 > **WASM 限制：** `OcrEngine::recognize_text` 使用 `rayon` 进行并行处理，在 `wasm32-unknown-unknown` 目标上会发生运行时 panic。这是从上游继承的已知问题。其余 API（`detect_words`、`find_text_lines`、`cjk_text` 工具）均兼容 WASM。
 
+## 使用外部模型进行 CJK OCR
+
+端到端 CJK OCR 需要两个模型协同工作：
+
+| 阶段 | 作用 | 状态 |
+|---|---|---|
+| **检测模型** | 定位图像中的文本区域 | ⚠️ 可使用 ocrs 内置的拉丁文训练模型（CJK 检测精度未经验证）；PaddleOCR 格式的检测模型尚不支持 |
+| **识别模型** | 读取检测区域中的字符 | ✅ 已支持 PaddleOCR ONNX 格式（自动检测 3 通道输入与 batch-first 输出） |
+
+本仓库不包含 CJK 训练模型，需要自行获取。
+
+### 第一步 — 下载识别模型
+
+[PP-OCRv5](https://github.com/PaddlePaddle/PaddleOCR) 在单个模型中支持简体中文、繁体中文、日语和英语。Hugging Face 上提供了预转换的 ONNX 文件，运行以下 Python 脚本即可下载：
+
+```sh
+pip install huggingface-hub pyyaml
+```
+
+```python
+from huggingface_hub import hf_hub_download
+
+hf_hub_download(
+    repo_id="marsena/paddleocr-onnx-models",
+    filename="PP-OCRv5_server_rec_infer.onnx",
+    local_dir="./models",
+)
+hf_hub_download(
+    repo_id="marsena/paddleocr-onnx-models",
+    filename="PP-OCRv5_server_rec_infer.yml",
+    local_dir="./models",
+)
+```
+
+### 第二步 — 提取字符字典
+
+识别模型输出标签索引，需要将对应的字符列表作为 `OcrEngineParams::alphabet` 传入。运行以下脚本从 YAML 配置中提取并生成 `alphabet.txt`：
+
+```python
+import yaml
+
+with open("models/PP-OCRv5_server_rec_infer.yml") as f:
+    cfg = yaml.safe_load(f)
+
+chars = cfg["PostProcess"]["character_dict"]
+
+# 部分条目（如国旗 emoji 🇨🇳）包含两个 Unicode 码点。
+# ocrs 将一个标签映射到一个字符，因此将其截断为第一个码点。
+# 这些条目不会出现在 CJK OCR 输出中，不影响实际使用。
+fixed = [c[0] if len(c) > 1 else c for c in chars]
+
+# PaddleOCR 默认在末尾追加空格标签（use_space_char=True）。
+fixed.append(" ")
+
+with open("models/alphabet.txt", "w", encoding="utf-8") as f:
+    f.write("".join(fixed))
+
+print(f"已写入 {len(fixed)} 个字符 → models/alphabet.txt")
+```
+
+> **已验证：** PP-OCRv5 字典含 18383 个字符 + 空格 = 18384 个字符。
+> `18384 + 1 (CTC blank) = 18385`，与模型输出维度完全匹配。
+
+### 第三步 — 通过 CLI 运行
+
+启用 ONNX 支持进行构建，然后使用 `--alphabet-file` 传入字典文件（避免大字符集的 shell 转义问题）：
+
+```sh
+cargo build -p ocrs-cli --release --features onnx
+
+./target/release/ocrs \
+  --rec-model  models/PP-OCRv5_server_rec_infer.onnx \
+  --alphabet-file models/alphabet.txt \
+  image.png
+```
+
+### 第四步 — 在 Rust 中使用
+
+```rust
+use ocrs::{OcrEngine, OcrEngineParams};
+use rten::Model;
+
+// 加载 PaddleOCR 识别模型（通道数和输出布局从 input_shape 自动检测）
+let rec_model = Model::load_file("models/PP-OCRv5_server_rec_infer.onnx")?;
+
+// 加载第二步生成的字典文件
+let alphabet = std::fs::read_to_string("models/alphabet.txt")?;
+
+let engine = OcrEngine::new(OcrEngineParams {
+    recognition_model: Some(rec_model),
+    // 省略 detection_model 则使用内置的拉丁文训练模型。
+    alphabet: Some(&alphabet),
+    ..Default::default()
+})?;
+```
+
+### 已知限制
+
+- **检测模型**：内置检测模型基于拉丁文训练。实测与 PP-OCRv5 配合可完成 CJK OCR，但对复杂版面的精度不保证。PaddleOCR 格式检测模型的支持已纳入计划。
+- **ONNX 功能标志**：加载 `.onnx` 文件需要启用 `--features onnx`（rten 默认格式为 `.rten`）。
+- **WASM**：`recognize_text` 在 `wasm32-unknown-unknown` 上会发生运行时 panic（上游 `rayon` 问题）。
+- **字典不匹配**：若 `alphabet` 字符串的顺序或长度与模型训练字典不一致，识别结果将出现乱码。请务必使用从模型 YAML 配置中提取的字典。
+
 ## CLI 安装
 
 首先确保已安装 Rust 和 Cargo，然后执行：

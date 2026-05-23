@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **PaddleOCR ONNX recognition model support**: `TextRecognizer` now auto-detects input channel count from `input_shape[1]` (1=grayscale for ocrs models, 3=RGB for PaddleOCR) and output layout from `batch_size` vs `dim[0]` (`[seq, batch, class]` → transpose; `[batch, seq, class]` → pass-through). No API changes; existing ocrs models work identically. Tested with PP-OCRv5 (Japanese CJK OCR confirmed working).
+- **`--alphabet-file <path>` CLI option**: Read the recognition alphabet from a UTF-8 file instead of a command-line string. Avoids shell-escaping corruption when passing large CJK character sets (PP-OCRv5 uses 18,384 characters). Takes precedence over `--alphabet` if both are specified.
 - `cjk_text` module with CJK-aware utilities:
   - `is_cjk(c: char) -> bool` (`const fn`) — covers Hiragana, Katakana, CJK Unified Ideographs (A–F), Hangul Syllables, Hangul Jamo, Hangul Compatibility Jamo, Hangul Jamo Extended-A/B, Bopomofo, Bopomofo Extended, CJK Symbols & Punctuation, CJK Compatibility, CJK Compatibility Forms, CJK Compatibility Ideographs, Halfwidth/Fullwidth Forms
   - `floor_char_boundary(s: &str, byte_idx: usize) -> usize` — UTF-8 safe byte boundary (avoids panic on multibyte CJK chars)
@@ -41,7 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Known Limitations
 
 - `OcrEngine::recognize_text` uses `rayon` for parallelism and panics at runtime on `wasm32-unknown-unknown`. This is an upstream issue. Other APIs and all `cjk_text` utilities are WASM-compatible.
-- No CJK-trained model is included. Alphabet helpers and segmentation are ready; end-to-end CJK OCR requires a separately trained detection and recognition model.
+- No CJK-trained model is bundled. End-to-end CJK OCR is possible by supplying an external PaddleOCR ONNX recognition model (see README for step-by-step instructions). The detection model format (PaddleOCR) is not yet supported; the built-in Latin-trained detection model works in practice.
+- Loading `.onnx` models requires building with `--features onnx` (rten default format is `.rten`).
 
 ## [0.12.2] - 2026-03-27
 

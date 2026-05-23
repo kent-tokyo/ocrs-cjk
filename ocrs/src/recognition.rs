@@ -137,8 +137,10 @@ fn prepare_text_line_batch(
     page_rect: Rect,
     output_height: usize,
     output_width: usize,
+    input_channels: usize,
 ) -> NdTensor<f32, 4> {
-    let mut output = NdTensor::full([lines.len(), 1, output_height, output_width], BLACK_VALUE);
+    let mut output =
+        NdTensor::full([lines.len(), input_channels, output_height, output_width], BLACK_VALUE);
 
     for (group_line_index, line) in lines.iter().enumerate() {
         let resized_line_img = prepare_text_line(
@@ -148,9 +150,13 @@ fn prepare_text_line_batch(
             line.resized_width,
             output_height,
         );
-        output
-            .slice_mut((group_line_index, 0, .., ..(line.resized_width as usize)))
-            .copy_from(&resized_line_img);
+        // For 1ch (grayscale): one iteration, same cost as before.
+        // For 3ch (PaddleOCR RGB): replicate grayscale data into all 3 channels.
+        for c in 0..input_channels {
+            output
+                .slice_mut((group_line_index, c, .., ..(line.resized_width as usize)))
+                .copy_from(&resized_line_img);
+        }
     }
 
     output
@@ -314,6 +320,9 @@ fn text_lines_from_recognition_results(
 pub struct TextRecognizer {
     model: Box<dyn Model + Send + Sync>,
     input_shape: Vec<Dimension>,
+    /// Number of input channels: 1 = grayscale (ocrs default), 3 = RGB (PaddleOCR).
+    /// Auto-detected from `input_shape[1]` at construction.
+    input_channels: usize,
 }
 
 impl TextRecognizer {
@@ -321,9 +330,14 @@ impl TextRecognizer {
     /// model does not have the expected inputs or outputs.
     pub fn from_model(model: impl Model + Send + Sync + 'static) -> anyhow::Result<TextRecognizer> {
         let input_shape = model.input_shape()?;
+        let input_channels = match input_shape.get(1) {
+            Some(Dimension::Fixed(c)) => *c as usize,
+            _ => 1,
+        };
         Ok(TextRecognizer {
             model: Box::new(model),
             input_shape,
+            input_channels,
         })
     }
 
@@ -338,6 +352,7 @@ impl TextRecognizer {
     /// Run text recognition on an NCHW batch of text line images, and return
     /// a `[batch, seq, label]` tensor of class probabilities.
     fn run(&self, input: NdTensor<f32, 4>) -> Result<NdTensor<f32, 3>, ModelRunError> {
+        let batch_size = input.size(0);
         let input: Tensor<f32> = input.into();
         let output = self
             .model
@@ -352,8 +367,13 @@ impl TextRecognizer {
             ))
         })?;
 
-        // Transpose from [seq, batch, class] => [batch, seq, class]
-        rec_sequence.permute([1, 0, 2]);
+        // Auto-detect output layout:
+        // ocrs models:      [seq, batch, class] → dim[0] != batch_size → transpose needed
+        // PaddleOCR models: [batch, seq, class] → dim[0] == batch_size → already correct
+        // Collision risk is negligible: batch ≤ 20 while seq_len is typically 100+.
+        if rec_sequence.size(0) != batch_size {
+            rec_sequence.permute([1, 0, 2]);
+        }
 
         Ok(rec_sequence)
     }
@@ -485,6 +505,7 @@ impl TextRecognizer {
                             page_rect,
                             rec_img_height as usize,
                             group_width as usize,
+                            self.input_channels,
                         );
 
                         let mut rec_output = self.run(rec_input)?;

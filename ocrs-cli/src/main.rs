@@ -122,6 +122,10 @@ struct Args {
     /// Alphabet used by the recognition model.
     /// If not provided, the default alphabet is used.
     alphabet: Option<String>,
+
+    /// Path to a file containing the alphabet (all characters concatenated, no separator).
+    /// Useful for large CJK alphabets where passing characters via --alphabet is impractical.
+    alphabet_file: Option<String>,
 }
 
 fn parse_args() -> Result<Args, lexopt::Error> {
@@ -130,6 +134,7 @@ fn parse_args() -> Result<Args, lexopt::Error> {
     let mut values = VecDeque::new();
     let mut allowed_chars = None;
     let mut alphabet = None;
+    let mut alphabet_file = None;
     let mut beam_search = false;
     let mut clipboard = false;
     let mut debug = false;
@@ -150,6 +155,9 @@ fn parse_args() -> Result<Args, lexopt::Error> {
             }
             Short('a') | Long("alphabet") => {
                 alphabet = Some(parser.value()?.string()?);
+            }
+            Long("alphabet-file") => {
+                alphabet_file = Some(parser.value()?.string()?);
             }
             Long("beam") => {
                 beam_search = true;
@@ -201,6 +209,11 @@ Options:
   -a, --alphabet <chars>
 
     Specify the alphabet used by the recognition model
+
+  --alphabet-file <path>
+
+    Read the alphabet from a file (characters concatenated, UTF-8).
+    Use this instead of --alphabet for large CJK alphabets.
 
   -c, --clipboard
 
@@ -287,6 +300,7 @@ Advanced options:
 
     Ok(Args {
         alphabet,
+        alphabet_file,
         beam_search,
         debug,
         detection_model,
@@ -393,13 +407,24 @@ fn main() -> Result<(), Box<dyn Error>> {
         )
     })?;
 
+    // Resolve alphabet: --alphabet-file takes characters from a file, avoiding
+    // shell escaping issues with large CJK character sets.
+    let alphabet_from_file = args
+        .alphabet_file
+        .map(|path| {
+            std::fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read alphabet file {}", path))
+        })
+        .transpose()?;
+    let alphabet = alphabet_from_file.or(args.alphabet);
+
     // Initialize OCR engine.
     #[allow(clippy::needless_update)]
     let engine = OcrEngine::new(OcrEngineParams {
         detection_model: Some(detection_model),
         recognition_model: Some(recognition_model),
         debug: args.debug,
-        alphabet: args.alphabet,
+        alphabet,
         decode_method: if args.beam_search {
             DecodeMethod::BeamSearch { width: 100 }
         } else {

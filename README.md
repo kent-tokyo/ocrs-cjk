@@ -45,6 +45,110 @@ The upstream ocrs recognizes the Latin alphabet only. See the [upstream issue](h
 
 > **WASM limitation:** `OcrEngine::recognize_text` uses `rayon` for parallelism and will panic at runtime on `wasm32-unknown-unknown`. This is an upstream issue inherited from `ocrs`. The remaining API (`detect_words`, `find_text_lines`, `cjk_text` utilities) is WASM-compatible.
 
+## CJK OCR with External Models
+
+End-to-end CJK OCR requires two models working together:
+
+| Stage | Role | Status |
+|---|---|---|
+| **Detection model** | Finds where text is in the image | ⚠️ ocrs built-in model (Latin-trained) — may miss CJK; PaddleOCR detection format not yet supported |
+| **Recognition model** | Reads characters in each detected region | ✅ PaddleOCR ONNX format supported (3-channel input, batch-first output) |
+
+No CJK-trained model is bundled in this repository. You need to supply one.
+
+### Step 1 — Download a CJK recognition model
+
+[PP-OCRv5](https://github.com/PaddlePaddle/PaddleOCR) supports Simplified Chinese, Traditional Chinese, Japanese, and English in a single model. A pre-converted ONNX file is available on Hugging Face. Run this Python snippet once to download it:
+
+```sh
+pip install huggingface-hub pyyaml
+```
+
+```python
+from huggingface_hub import hf_hub_download
+
+hf_hub_download(
+    repo_id="marsena/paddleocr-onnx-models",
+    filename="PP-OCRv5_server_rec_infer.onnx",
+    local_dir="./models",
+)
+hf_hub_download(
+    repo_id="marsena/paddleocr-onnx-models",
+    filename="PP-OCRv5_server_rec_infer.yml",
+    local_dir="./models",
+)
+```
+
+### Step 2 — Extract the character dictionary
+
+The recognition model outputs label indices. You must supply the matching character list as `OcrEngineParams::alphabet`. It is embedded in the downloaded YAML config. Run this script to extract and write `alphabet.txt`:
+
+```python
+import yaml
+
+with open("models/PP-OCRv5_server_rec_infer.yml") as f:
+    cfg = yaml.safe_load(f)
+
+chars = cfg["PostProcess"]["character_dict"]
+
+# Some entries (e.g. country-flag emoji 🇯🇵) span two Unicode code points.
+# ocrs maps one label → one char, so collapse each entry to its first code point.
+# These multi-codepoint entries won't appear in CJK OCR output regardless.
+fixed = [c[0] if len(c) > 1 else c for c in chars]
+
+# PaddleOCR appends a space label when use_space_char=True (the default).
+fixed.append(" ")
+
+with open("models/alphabet.txt", "w", encoding="utf-8") as f:
+    f.write("".join(fixed))
+
+print(f"Written {len(fixed)} characters → models/alphabet.txt")
+```
+
+> **Confirmed:** PP-OCRv5 has 18383 dict entries + space = 18384 chars total.
+> `18384 + 1 (CTC blank) = 18385` matches the model's output dimension exactly.
+
+### Step 3 — Run via CLI
+
+Build with ONNX support enabled, then pass `--alphabet-file` (avoids shell-escaping issues with large character sets):
+
+```sh
+cargo build -p ocrs-cli --release --features onnx
+
+./target/release/ocrs \
+  --rec-model  models/PP-OCRv5_server_rec_infer.onnx \
+  --alphabet-file models/alphabet.txt \
+  image.png
+```
+
+### Step 4 — Use the model in Rust
+
+```rust
+use ocrs::{OcrEngine, OcrEngineParams};
+use rten::Model;
+
+// Load the PaddleOCR recognition model (channel count and output layout
+// are detected automatically from the model's input_shape).
+let rec_model = Model::load_file("models/PP-OCRv5_server_rec_infer.onnx")?;
+
+// Pass the alphabet produced in Step 2.
+let alphabet = std::fs::read_to_string("models/alphabet.txt")?;
+
+let engine = OcrEngine::new(OcrEngineParams {
+    recognition_model: Some(rec_model),
+    // detection_model: omitted → uses the built-in Latin-trained model.
+    alphabet: Some(&alphabet),
+    ..Default::default()
+})?;
+```
+
+### Known limitations
+
+- **Detection model**: The built-in detection model was trained on Latin text. It works for CJK text in practice (tested with PP-OCRv5), but accuracy on complex layouts is not guaranteed. Support for PaddleOCR-format detection models is planned.
+- **ONNX feature flag**: The CLI and library must be built with `--features onnx` to load `.onnx` files (rten default format is `.rten`).
+- **WASM**: `recognize_text` panics at runtime on `wasm32-unknown-unknown` (upstream `rayon` issue).
+- **Alphabet mismatch**: If the alphabet string does not exactly match the model's training dictionary (order and length), recognition output will be garbled. Always use the dictionary extracted from the model's YAML config.
+
 ## CLI installation
 
 To install the CLI tool, you will first need Rust and Cargo installed. Then
