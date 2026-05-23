@@ -4,6 +4,8 @@
 > The goal is to extend ocrs with a CJK-capable alphabet, CJK-aware text segmentation, and full offline / WebAssembly compatibility — without any C/C++ dependencies (no Tesseract, no OpenCV).
 > Upstream changes are periodically merged from `robertknight/ocrs`.
 
+**Languages:** [English](README.md) | [日本語](README_ja.md) | [简体中文](README_zh.md) | [繁體中文](README_zh-tw.md) | [한국어](README_kr.md)
+
 ---
 
 **ocrs** is a Rust library and CLI tool for extracting text from images, also known as OCR (Optical Character Recognition).

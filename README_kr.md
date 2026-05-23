@@ -4,6 +4,8 @@
 > CJK 알파벳 확장, CJK 인식 텍스트 분절, 그리고 완전한 오프라인 / WebAssembly 호환을 목표로 하며, C/C++ 의존성(Tesseract, OpenCV 등)을 일절 사용하지 않습니다.
 > 업스트림(`robertknight/ocrs`)의 변경 사항은 주기적으로 병합됩니다.
 
+**언어:** [English](README.md) | [日本語](README_ja.md) | [简体中文](README_zh.md) | [繁體中文](README_zh-tw.md) | [한국어](README_kr.md)
+
 ---
 
 **ocrs**는 이미지에서 텍스트를 추출하는 Rust 라이브러리 및 CLI 도구입니다(광학 문자 인식, OCR).

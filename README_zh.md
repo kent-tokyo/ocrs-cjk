@@ -4,6 +4,8 @@
 > 目标是在 ocrs 基础上扩展 CJK 字符集、CJK 感知文本分词，并实现完全离线 / WebAssembly 兼容——不依赖任何 C/C++ 库（无 Tesseract，无 OpenCV）。
 > 上游（`robertknight/ocrs`）的更新会定期合并进来。
 
+**语言:** [English](README.md) | [日本語](README_ja.md) | [简体中文](README_zh.md) | [繁體中文](README_zh-tw.md) | [한국어](README_kr.md)
+
 ---
 
 **ocrs** 是一个用于从图像中提取文字的 Rust 库和 CLI 工具，即光学字符识别（OCR）。

@@ -4,6 +4,8 @@
 > CJK対応アルファベット、CJK文字列セグメンテーション、そして完全オフライン / WebAssembly 動作を目標とし、C/C++依存（Tesseract、OpenCVなど）を一切持ちません。
 > アップストリーム（`robertknight/ocrs`）の変更は定期的にマージされます。
 
+**言語:** [English](README.md) | [日本語](README_ja.md) | [简体中文](README_zh.md) | [繁體中文](README_zh-tw.md) | [한국어](README_kr.md)
+
 ---
 
 **ocrs** は、画像からテキストを抽出するRustライブラリおよびCLIツールです（光学文字認識 / OCR）。
