@@ -41,13 +41,13 @@ ocrs 目前处于早期预览阶段，识别错误率高于商业 OCR 引擎。
 
 | 解决方案 | 运行时 | CJK (JA/ZH/KO) | 原生 WASM | 无 C/C++ | 离线 | 许可证 |
 |---|---|---|---|---|---|---|
-| **ocrs-cjk**（本 Fork） | Pure Rust | ✅ / ✅ / ✅ | ✅ | ✅ | ✅ | Apache-2.0 / MIT |
-| [ocrs](https://github.com/robertknight/ocrs)（上游） | Pure Rust | ❌ 仅拉丁字母 | ✅ | ✅ | ✅ | Apache-2.0 / MIT |
-| [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++（`tesseract-sys` FFI） | ✅ / ✅ / ✅ | 部分¹ | ❌ | ✅ | Apache-2.0 |
-| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python / C++ | ✅ / ✅ / ✅ | 部分² | ❌ | ✅ | Apache-2.0 |
-| [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Python / PyTorch | ✅ / ✅ / ✅ | ❌ | ❌ | ✅ | Apache-2.0 |
-| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Python / ONNX | ✅ / ✅ / ❓ | ❌ | ❌ | ✅ | Apache-2.0 |
-| [manga-ocr](https://github.com/kha-white/manga-ocr) | Python / PyTorch | 仅日语 | 非官方³ | 可选 | ✅ | Apache-2.0 |
+| **ocrs-cjk**（本 Fork） | Pure Rust | Yes / Yes / Yes | Yes | Yes | Yes | Apache-2.0 / MIT |
+| [ocrs](https://github.com/robertknight/ocrs)（上游） | Pure Rust | No 仅拉丁字母 | Yes | Yes | Yes | Apache-2.0 / MIT |
+| [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++（`tesseract-sys` FFI） | Yes / Yes / Yes | 部分¹ | No | Yes | Apache-2.0 |
+| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python / C++ | Yes / Yes / Yes | 部分² | No | Yes | Apache-2.0 |
+| [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Python / PyTorch | Yes / Yes / Yes | No | No | Yes | Apache-2.0 |
+| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Python / ONNX | Yes / Yes / Unknown | No | No | Yes | Apache-2.0 |
+| [manga-ocr](https://github.com/kha-white/manga-ocr) | Python / PyTorch | 仅日语 | 非官方³ | 可选 | Yes | Apache-2.0 |
 
 ¹ `tesseract-wasm` 为独立 JS 项目；CJK tessdata 需单独加载；非原生 `wasm32-unknown-unknown`。  
 ² PaddleOCR 有 JS 浏览器 SDK，但并非 Rust 原生 WASM。  
@@ -66,8 +66,8 @@ ocrs 目前处于早期预览阶段，识别错误率高于商业 OCR 引擎。
 
 | 阶段 | 作用 | 状态 |
 |---|---|---|
-| **检测模型** | 定位图像中的文本区域 | ⚠️ 可使用 ocrs 内置的拉丁文训练模型（CJK 检测精度未经验证）；PaddleOCR 格式的检测模型尚不支持 |
-| **识别模型** | 读取检测区域中的字符 | ✅ 已支持 PaddleOCR ONNX 格式（自动检测 3 通道输入与 batch-first 输出） |
+| **检测模型** | 定位图像中的文本区域 | [!] 可使用 ocrs 内置的拉丁文训练模型（CJK 检测精度未经验证）；PaddleOCR 格式的检测模型尚不支持 |
+| **识别模型** | 读取检测区域中的字符 | Yes 已支持 PaddleOCR ONNX 格式（自动检测 3 通道输入与 batch-first 输出） |
 
 本仓库不包含 CJK 训练模型，需要自行获取。
 
@@ -106,7 +106,7 @@ with open("models/PP-OCRv5_server_rec_infer.yml") as f:
 
 chars = cfg["PostProcess"]["character_dict"]
 
-# 部分条目（如国旗 emoji 🇨🇳）包含两个 Unicode 码点。
+# 部分条目（如国旗 emoji ）包含两个 Unicode 码点。
 # ocrs 将一个标签映射到一个字符，因此将其截断为第一个码点。
 # 这些条目不会出现在 CJK OCR 输出中，不影响实际使用。
 fixed = [c[0] if len(c) > 1 else c for c in chars]

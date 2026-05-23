@@ -49,13 +49,13 @@ The upstream ocrs recognizes the Latin alphabet only. See the [upstream issue](h
 
 | Solution | Runtime | CJK (JA/ZH/KO) | Native WASM | No C/C++ | Offline | License |
 |---|---|---|---|---|---|---|
-| **ocrs-cjk** (this fork) | Pure Rust | ✅ / ✅ / ✅ | ✅ | ✅ | ✅ | Apache-2.0 / MIT |
-| [ocrs](https://github.com/robertknight/ocrs) (upstream) | Pure Rust | ❌ Latin only | ✅ | ✅ | ✅ | Apache-2.0 / MIT |
-| [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++ (FFI via `tesseract-sys`) | ✅ / ✅ / ✅ | Partial¹ | ❌ | ✅ | Apache-2.0 |
-| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python / C++ | ✅ / ✅ / ✅ | Partial² | ❌ | ✅ | Apache-2.0 |
-| [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Python / PyTorch | ✅ / ✅ / ✅ | ❌ | ❌ | ✅ | Apache-2.0 |
-| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Python / ONNX | ✅ / ✅ / ❓ | ❌ | ❌ | ✅ | Apache-2.0 |
-| [manga-ocr](https://github.com/kha-white/manga-ocr) | Python / PyTorch | JA only | Unofficial³ | Optional | ✅ | Apache-2.0 |
+| **ocrs-cjk** (this fork) | Pure Rust | Yes / Yes / Yes | Yes | Yes | Yes | Apache-2.0 / MIT |
+| [ocrs](https://github.com/robertknight/ocrs) (upstream) | Pure Rust | No Latin only | Yes | Yes | Yes | Apache-2.0 / MIT |
+| [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++ (FFI via `tesseract-sys`) | Yes / Yes / Yes | Partial¹ | No | Yes | Apache-2.0 |
+| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python / C++ | Yes / Yes / Yes | Partial² | No | Yes | Apache-2.0 |
+| [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Python / PyTorch | Yes / Yes / Yes | No | No | Yes | Apache-2.0 |
+| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Python / ONNX | Yes / Yes / Unknown | No | No | Yes | Apache-2.0 |
+| [manga-ocr](https://github.com/kha-white/manga-ocr) | Python / PyTorch | JA only | Unofficial³ | Optional | Yes | Apache-2.0 |
 
 ¹ `tesseract-wasm` is a separate JS project; CJK tessdata must be loaded separately; not native `wasm32-unknown-unknown`.  
 ² PaddleOCR has a JS browser SDK, but it is not Rust-native WASM.  
@@ -74,8 +74,8 @@ End-to-end CJK OCR requires two models working together:
 
 | Stage | Role | Status |
 |---|---|---|
-| **Detection model** | Finds where text is in the image | ⚠️ ocrs built-in model (Latin-trained) — may miss CJK; PaddleOCR detection format not yet supported |
-| **Recognition model** | Reads characters in each detected region | ✅ PaddleOCR ONNX format supported (3-channel input, batch-first output) |
+| **Detection model** | Finds where text is in the image | [!] ocrs built-in model (Latin-trained) — may miss CJK; PaddleOCR detection format not yet supported |
+| **Recognition model** | Reads characters in each detected region | Yes PaddleOCR ONNX format supported (3-channel input, batch-first output) |
 
 No CJK-trained model is bundled in this repository. You need to supply one.
 
@@ -114,7 +114,7 @@ with open("models/PP-OCRv5_server_rec_infer.yml") as f:
 
 chars = cfg["PostProcess"]["character_dict"]
 
-# Some entries (e.g. country-flag emoji 🇯🇵) span two Unicode code points.
+# Some entries (e.g. country-flag emoji ) span two Unicode code points.
 # ocrs maps one label → one char, so collapse each entry to its first code point.
 # These multi-codepoint entries won't appear in CJK OCR output regardless.
 fixed = [c[0] if len(c) > 1 else c for c in chars]

@@ -41,13 +41,13 @@ ocrs は現在アーリープレビュー段階です。商用OCRエンジンよ
 
 | ソリューション | ランタイム | CJK (JA/ZH/KO) | ネイティブWASM | C/C++不要 | オフライン | ライセンス |
 |---|---|---|---|---|---|---|
-| **ocrs-cjk**（このフォーク） | Pure Rust | ✅ / ✅ / ✅ | ✅ | ✅ | ✅ | Apache-2.0 / MIT |
-| [ocrs](https://github.com/robertknight/ocrs)（upstream） | Pure Rust | ❌ ラテン文字のみ | ✅ | ✅ | ✅ | Apache-2.0 / MIT |
-| [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++（`tesseract-sys` FFI） | ✅ / ✅ / ✅ | 部分的¹ | ❌ | ✅ | Apache-2.0 |
-| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python / C++ | ✅ / ✅ / ✅ | 部分的² | ❌ | ✅ | Apache-2.0 |
-| [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Python / PyTorch | ✅ / ✅ / ✅ | ❌ | ❌ | ✅ | Apache-2.0 |
-| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Python / ONNX | ✅ / ✅ / ❓ | ❌ | ❌ | ✅ | Apache-2.0 |
-| [manga-ocr](https://github.com/kha-white/manga-ocr) | Python / PyTorch | 日本語のみ | 非公式³ | 任意 | ✅ | Apache-2.0 |
+| **ocrs-cjk**（このフォーク） | Pure Rust | Yes / Yes / Yes | Yes | Yes | Yes | Apache-2.0 / MIT |
+| [ocrs](https://github.com/robertknight/ocrs)（upstream） | Pure Rust | No ラテン文字のみ | Yes | Yes | Yes | Apache-2.0 / MIT |
+| [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++（`tesseract-sys` FFI） | Yes / Yes / Yes | 部分的¹ | No | Yes | Apache-2.0 |
+| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python / C++ | Yes / Yes / Yes | 部分的² | No | Yes | Apache-2.0 |
+| [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Python / PyTorch | Yes / Yes / Yes | No | No | Yes | Apache-2.0 |
+| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Python / ONNX | Yes / Yes / Unknown | No | No | Yes | Apache-2.0 |
+| [manga-ocr](https://github.com/kha-white/manga-ocr) | Python / PyTorch | 日本語のみ | 非公式³ | 任意 | Yes | Apache-2.0 |
 
 ¹ `tesseract-wasm` は別プロジェクト（JS）。CJK tessdata の別途ロードが必要。`wasm32-unknown-unknown` ネイティブではない。  
 ² PaddleOCR には JS ブラウザ SDK があるが、Rust ネイティブ WASM ではない。  
@@ -66,8 +66,8 @@ CJK OCRを実際に動かすには、以下の2つのモデルが必要です：
 
 | ステージ | 役割 | 状態 |
 |---|---|---|
-| **検出モデル** | 画像内のテキスト領域を見つける | ⚠️ ocrs付属のラテン文字学習済みモデルを使用可能（CJK検出精度は未検証）。PaddleOCR形式の検出モデルは未対応 |
-| **認識モデル** | 検出領域の文字を読む | ✅ PaddleOCR ONNX形式に対応済み（3チャンネル入力・バッチファースト出力を自動検出） |
+| **検出モデル** | 画像内のテキスト領域を見つける | [!] ocrs付属のラテン文字学習済みモデルを使用可能（CJK検出精度は未検証）。PaddleOCR形式の検出モデルは未対応 |
+| **認識モデル** | 検出領域の文字を読む | Yes PaddleOCR ONNX形式に対応済み（3チャンネル入力・バッチファースト出力を自動検出） |
 
 このリポジトリにはCJK学習済みモデルは含まれていません。別途入手する必要があります。
 
@@ -106,7 +106,7 @@ with open("models/PP-OCRv5_server_rec_infer.yml") as f:
 
 chars = cfg["PostProcess"]["character_dict"]
 
-# 一部のエントリ（国旗絵文字 🇯🇵 など）は2つのUnicodeコードポイントを持ちます。
+# 一部のエントリ（国旗絵文字  など）は2つのUnicodeコードポイントを持ちます。
 # ocrs は1ラベル = 1文字として扱うため、最初のコードポイントに丸めます。
 # これらのエントリはCJK OCRの出力には現れないため実用上の問題はありません。
 fixed = [c[0] if len(c) > 1 else c for c in chars]
