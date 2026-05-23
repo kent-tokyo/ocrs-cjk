@@ -3,6 +3,8 @@ use std::fmt::Write;
 
 use rten_imageproc::{bounding_rect, min_area_rect, Point, Rect, RotatedRect, Vec2};
 
+use crate::cjk_text;
+
 /// A non-empty sequence of recognized characters ([TextChar]) that constitute a
 /// logical unit of a document such as a word or line.
 pub trait TextItem {
@@ -16,12 +18,9 @@ pub trait TextItem {
 
     /// Return the oriented bounding rectangle of all characters in this item.
     fn rotated_rect(&self) -> RotatedRect {
-        let points: Vec<_> = self
-            .chars()
-            .iter()
-            .flat_map(|c| c.rect.corners())
-            .map(Point::to_f32)
-            .collect();
+        let chars = self.chars();
+        let mut points = Vec::with_capacity(chars.len() * 4);
+        points.extend(chars.iter().flat_map(|c| c.rect.corners()).map(Point::to_f32));
         let rect = min_area_rect(&points).expect("expected valid rect");
 
         // Give the rect a predictable orientation. We currently assume the
@@ -79,12 +78,50 @@ impl TextLine {
             .filter(|chars| !chars.is_empty())
             .map(TextWord::new)
     }
+
+    /// Return an iterator over CJK-aware segments of this line.
+    ///
+    /// Unlike [`words`](Self::words), this splits at script transitions
+    /// (Latin↔CJK) without requiring a space delimiter. ASCII spaces are still
+    /// treated as split points and are not included in any segment.
+    ///
+    /// For Latin-only text the output is identical to `words()`.
+    pub fn segments(&self) -> impl Iterator<Item = TextWord<'_>> {
+        TextSegmentIter {
+            remaining: self.chars(),
+        }
+    }
 }
 
 impl TextItem for TextLine {
     /// Return the bounding rects of each character in the line.
     fn chars(&self) -> &[TextChar] {
         &self.chars
+    }
+}
+
+struct TextSegmentIter<'a> {
+    remaining: &'a [TextChar],
+}
+
+impl<'a> Iterator for TextSegmentIter<'a> {
+    type Item = TextWord<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Single pass: find first non-space char and its index simultaneously.
+        let start = self.remaining.iter().position(|c| c.char != ' ')?;
+        let first_is_cjk = cjk_text::is_cjk(self.remaining[start].char);
+
+        // Continue from start+1 — avoids re-scanning the leading spaces a second time.
+        let end = self.remaining[start + 1..]
+            .iter()
+            .position(|c| c.char == ' ' || cjk_text::is_cjk(c.char) != first_is_cjk)
+            .map(|p| start + 1 + p)
+            .unwrap_or(self.remaining.len());
+
+        let (seg, rest) = self.remaining.split_at(end);
+        self.remaining = rest;
+        Some(TextWord::new(&seg[start..]))
     }
 }
 
@@ -183,5 +220,79 @@ mod tests {
             words[2].bounding_rect(),
             Rect::from_tlhw(0, char_width * 9, 25, char_width * 3)
         );
+    }
+
+    // ---- segments() ----
+
+    #[test]
+    fn test_segments_latin_matches_words() {
+        let chars = gen_text_chars("foo bar baz", 10);
+        let line = TextLine::new(chars);
+        let segs: Vec<_> = line.segments().map(|w| w.to_string()).collect();
+        let words: Vec<_> = line.words().map(|w| w.to_string()).collect();
+        assert_eq!(segs, words);
+    }
+
+    #[test]
+    fn test_segments_cjk_only() {
+        let chars = gen_text_chars("日本語", 20);
+        let line = TextLine::new(chars);
+        let segs: Vec<_> = line.segments().collect();
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].to_string(), "日本語");
+    }
+
+    #[test]
+    fn test_segments_mixed_space_delimited() {
+        let chars = gen_text_chars("Hello 世界", 15);
+        let line = TextLine::new(chars);
+        let segs: Vec<_> = line.segments().collect();
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].to_string(), "Hello");
+        assert_eq!(segs[1].to_string(), "世界");
+    }
+
+    #[test]
+    fn test_segments_adjacent_script_boundary() {
+        // No space — script boundary alone triggers split.
+        let chars = gen_text_chars("OCR認識", 15);
+        let line = TextLine::new(chars);
+        let segs: Vec<_> = line.segments().collect();
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].to_string(), "OCR");
+        assert_eq!(segs[1].to_string(), "認識");
+    }
+
+    #[test]
+    fn test_segments_rapid_transitions() {
+        let chars = gen_text_chars("a世b", 15);
+        let line = TextLine::new(chars);
+        let segs: Vec<_> = line.segments().collect();
+        assert_eq!(segs.len(), 3);
+        assert_eq!(segs[0].to_string(), "a");
+        assert_eq!(segs[1].to_string(), "世");
+        assert_eq!(segs[2].to_string(), "b");
+    }
+
+    #[test]
+    fn test_segments_double_space() {
+        let chars = gen_text_chars("foo  bar", 10);
+        let line = TextLine::new(chars);
+        let segs: Vec<_> = line.segments().collect();
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].to_string(), "foo");
+        assert_eq!(segs[1].to_string(), "bar");
+    }
+
+    #[test]
+    fn test_segments_bounding_rect_cjk() {
+        let width = 20;
+        let chars = gen_text_chars("ab日本cd", width);
+        let line = TextLine::new(chars);
+        let segs: Vec<_> = line.segments().collect();
+        // "ab", "日本", "cd"
+        assert_eq!(segs.len(), 3);
+        assert_eq!(segs[1].bounding_rect().left(), 2 * width);
+        assert_eq!(segs[1].bounding_rect().right(), 4 * width);
     }
 }

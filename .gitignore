@@ -1,6 +1,11 @@
 dist/
 node_modules/
 target/
+*.rlib
 
 # Pre-trained models
 *.rten
+*.txt
+.claude/
+CLAUDE.md
+AGENTS.md

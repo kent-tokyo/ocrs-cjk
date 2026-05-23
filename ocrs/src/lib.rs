@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::anyhow;
 use rten_imageproc::RotatedRect;
 use rten_tensor::prelude::*;
@@ -20,6 +22,9 @@ mod text_items;
 #[cfg(all(feature = "export-wasm", target_arch = "wasm32"))]
 mod wasm_api;
 
+pub mod cjk_text;
+pub use cjk_text::{cjk_alphabet, cjk_alphabet_chars, is_cjk, segment};
+
 use detection::{TextDetector, TextDetectorParams};
 use layout_analysis::find_text_lines;
 use model::Model;
@@ -30,8 +35,7 @@ pub use preprocess::{DimOrder, ImagePixels, ImageSource, ImageSourceError};
 pub use recognition::DecodeMethod;
 pub use text_items::{TextChar, TextItem, TextLine, TextWord};
 
-// nb. The "E" before "ABCDE" should be the EUR symbol.
-const DEFAULT_ALPHABET: &str = " 0123456789!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~EABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const DEFAULT_ALPHABET: &str = " 0123456789!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~€ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 /// Configuration for an [OcrEngine] instance.
 #[derive(Default)]
@@ -113,7 +117,7 @@ pub struct OcrEngine {
     recognizer: Option<TextRecognizer>,
     debug: bool,
     decode_method: DecodeMethod,
-    alphabet: String,
+    alphabet_chars: Vec<char>,
 
     /// Indices of characters in `alphabet` that are excluded from recognition
     /// output. See [`OcrEngineParams::allowed_chars`].
@@ -146,21 +150,24 @@ impl OcrEngine {
             .map(TextRecognizer::from_model)
             .transpose()?;
 
-        let alphabet = params
-            .alphabet
-            .unwrap_or_else(|| DEFAULT_ALPHABET.to_string());
+        let alphabet_chars: Vec<char> = match params.alphabet {
+            Some(s) => s.chars().collect(),
+            None => DEFAULT_ALPHABET.chars().collect(),
+        };
 
         let excluded_char_labels = params.allowed_chars.map(|allowed_characters| {
-            alphabet
-                .chars()
+            // Build a set for O(1) membership check; avoids O(alphabet × allowed) comparisons.
+            let allowed_set: HashSet<char> = allowed_characters.chars().collect();
+            // Index `0` is reserved for the CTC blank character and
+            // `i + 1` is used as training label for character at
+            // index `i` of `alphabet` string.
+            //
+            // See https://github.com/robertknight/ocrs-models/blob/3d98fc655d6fd4acddc06e7f5d60a55b55748a48/ocrs_models/datasets/util.py#L113
+            alphabet_chars
+                .iter()
                 .enumerate()
-                .filter_map(|(index, char)| {
-                    if !allowed_characters.contains(char) {
-                        // Index `0` is reserved for the CTC blank character and
-                        // `i + 1` is used as training label for character at
-                        // index `i` of `alphabet` string.
-                        //
-                        // See https://github.com/robertknight/ocrs-models/blob/3d98fc655d6fd4acddc06e7f5d60a55b55748a48/ocrs_models/datasets/util.py#L113
+                .filter_map(|(index, &char)| {
+                    if !allowed_set.contains(&char) {
                         Some(index + 1)
                     } else {
                         None
@@ -172,7 +179,7 @@ impl OcrEngine {
         Ok(OcrEngine {
             detector,
             recognizer,
-            alphabet,
+            alphabet_chars,
             excluded_char_labels,
             debug: params.debug,
             decode_method: params.decode_method,
@@ -246,7 +253,7 @@ impl OcrEngine {
                 RecognitionOpt {
                     debug: self.debug,
                     decode_method: self.decode_method,
-                    alphabet: &self.alphabet,
+                    alphabet_chars: &self.alphabet_chars,
                     excluded_char_labels: self.excluded_char_labels.as_deref(),
                 },
             )
@@ -277,6 +284,11 @@ impl OcrEngine {
         Ok(line_image)
     }
 
+    /// Return the alphabet the engine was configured with, as a slice of chars.
+    pub fn alphabet(&self) -> &[char] {
+        &self.alphabet_chars
+    }
+
     /// Return the confidence threshold applied to the output of the text
     /// detection model to determine whether a pixel is text or not.
     pub fn detection_threshold(&self) -> f32 {
@@ -288,15 +300,20 @@ impl OcrEngine {
 
     /// Convenience API that extracts all text from an image as a single string.
     pub fn get_text(&self, input: &OcrInput) -> anyhow::Result<String> {
+        use std::fmt::Write;
         let word_rects = self.detect_words(input)?;
         let line_rects = self.find_text_lines(input, &word_rects);
-        let text = self
-            .recognize_text(input, &line_rects)?
-            .into_iter()
-            .filter_map(|line| line.map(|l| l.to_string()))
-            .collect::<Vec<_>>()
-            .join("\n");
-        Ok(text)
+        let lines = self.recognize_text(input, &line_rects)?;
+        let mut out = String::new();
+        let mut first = true;
+        for line in lines.into_iter().flatten() {
+            if !first {
+                out.push('\n');
+            }
+            write!(out, "{}", line).unwrap();
+            first = false;
+        }
+        Ok(out)
     }
 }
 

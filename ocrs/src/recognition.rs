@@ -27,7 +27,7 @@ use crate::text_items::{TextChar, TextLine};
 /// will not tightly fit curved lines. This function returns a polygon which
 /// closely follows the edges of individual words.
 fn line_polygon(words: &[RotatedRect]) -> Vec<Point> {
-    let mut polygon = Vec::new();
+    let mut polygon = Vec::with_capacity(words.len() * 4);
 
     let floor_point = |p: PointF| Point::from_yx(p.y as i32, p.x as i32);
 
@@ -76,7 +76,6 @@ fn resized_line_width(orig_width: i32, orig_height: i32, height: i32) -> u32 {
 
 /// Details about a text line needed to prepare the input to the text
 /// recognition model.
-#[derive(Clone)]
 struct TextRecLine {
     /// Index of this line in the list of lines found in the image.
     index: usize,
@@ -204,14 +203,14 @@ pub enum DecodeMethod {
     },
 }
 
-#[derive(Clone, Default)]
 pub struct RecognitionOpt<'a> {
     pub debug: bool,
 
     /// Method used to decode character sequence outputs to character values.
     pub decode_method: DecodeMethod,
 
-    pub alphabet: &'a str,
+    /// Pre-collected alphabet chars for O(1) label-to-char lookup.
+    pub alphabet_chars: &'a [char],
 
     pub excluded_char_labels: Option<&'a [usize]>,
 }
@@ -240,7 +239,7 @@ struct LineRecResult {
 /// Entries in the result may be `None` if no text was recognized for a line.
 fn text_lines_from_recognition_results(
     results: &[LineRecResult],
-    alphabet: &str,
+    alphabet_chars: &[char],
 ) -> Vec<Option<TextLine>> {
     results
         .iter()
@@ -279,14 +278,14 @@ fn text_lines_from_recognition_results(
                         return None;
                     }
 
-                    let char = alphabet
-                        .chars()
-                        // Index `0` is reserved for blank character and `i + 1` is used as training
-                        // label for character at index `i` of `alphabet` string.  Here we're
-                        // subtracting 1 to get the actual index from the output label
-                        //
-                        // See https://github.com/robertknight/ocrs-models/blob/3d98fc655d6fd4acddc06e7f5d60a55b55748a48/ocrs_models/datasets/util.py#L113
-                        .nth((step.label - 1) as usize)
+                    // Index `0` is reserved for blank character and `i + 1` is used as training
+                    // label for character at index `i` of `alphabet` string.  Here we're
+                    // subtracting 1 to get the actual index from the output label.
+                    // See https://github.com/robertknight/ocrs-models/blob/3d98fc655d6fd4acddc06e7f5d60a55b55748a48/ocrs_models/datasets/util.py#L113
+                    let char = step
+                        .label
+                        .checked_sub(1)
+                        .and_then(|idx| alphabet_chars.get(idx as usize).copied())
                         .unwrap_or('?');
 
                     Some(TextChar {
@@ -410,7 +409,7 @@ impl TextRecognizer {
         let RecognitionOpt {
             debug,
             decode_method,
-            alphabet,
+            alphabet_chars,
             excluded_char_labels,
         } = opts;
 
@@ -450,15 +449,21 @@ impl TextRecognizer {
         let max_lines_per_group = 20;
         let line_groups: Vec<(i32, Vec<TextRecLine>)> = line_groups
             .into_iter()
-            .flat_map(|(group_width, lines)| {
-                lines
-                    .chunks(max_lines_per_group)
-                    .map(|chunk| (group_width, chunk.to_vec()))
-                    .collect::<Vec<_>>()
+            .flat_map(|(group_width, mut lines)| {
+                let mut batches = Vec::new();
+                while lines.len() > max_lines_per_group {
+                    let tail = lines.split_off(max_lines_per_group);
+                    batches.push((group_width, lines));
+                    lines = tail;
+                }
+                if !lines.is_empty() {
+                    batches.push((group_width, lines));
+                }
+                batches
             })
             .collect();
 
-        let alphabet_len = alphabet.chars().count();
+        let alphabet_len = alphabet_chars.len();
 
         // Run text recognition on batches of lines.
         let batch_rec_results: Result<Vec<Vec<LineRecResult>>, ModelRunError> =
@@ -534,7 +539,7 @@ impl TextRecognizer {
         // batching and parallel processing. Re-sort them into input order.
         line_rec_results.sort_by_key(|result| result.line.index);
 
-        let text_lines = text_lines_from_recognition_results(&line_rec_results, alphabet);
+        let text_lines = text_lines_from_recognition_results(&line_rec_results, alphabet_chars);
 
         Ok(text_lines)
     }

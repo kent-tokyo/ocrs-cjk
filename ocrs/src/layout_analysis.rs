@@ -109,6 +109,9 @@ pub fn find_block_separators(words: &[RotatedRect]) -> Vec<Rect> {
     }
     all_word_spacings.sort_unstable();
 
+    // TODO(cjk): For CJK text, inter-glyph spacing is near zero, so
+    // median_word_spacing will be 0, making min_width degenerate. Revisit
+    // when a CJK-trained model is available.
     let median_word_spacing = all_word_spacings
         .get(all_word_spacings.len() / 2)
         .copied()
@@ -226,10 +229,7 @@ pub fn find_text_lines(words: &[RotatedRect]) -> Vec<Vec<RotatedRect>> {
     }
 
     // Flatten paragraphs into a list of lines.
-    paragraphs
-        .into_iter()
-        .flat_map(|para| para.into_iter())
-        .collect()
+    paragraphs.into_iter().flatten().collect()
 }
 
 #[cfg(test)]

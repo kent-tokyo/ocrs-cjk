@@ -2,11 +2,11 @@
 name = "ocrs"
 version = "0.12.2"
 edition = "2021"
-authors = ["Robert Knight"]
-description = "OCR engine"
+authors = ["Robert Knight", "kent-tokyo"]
+description = "OCR engine with CJK (Chinese, Japanese, Korean) support"
 license = "MIT OR Apache-2.0"
-homepage = "https://github.com/robertknight/ocrs"
-repository = "https://github.com/robertknight/ocrs"
+homepage = "https://github.com/kent-tokyo/ocrs-cjk"
+repository = "https://github.com/kent-tokyo/ocrs-cjk"
 
 [dependencies]
 anyhow = "1.0.102"

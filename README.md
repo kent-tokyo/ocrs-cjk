@@ -1,4 +1,10 @@
-# Ocrs
+# ocrs-cjk
+
+> **This is a fork of [ocrs](https://github.com/robertknight/ocrs) focused on CJK (Chinese, Japanese, Korean) text recognition.**
+> The goal is to extend ocrs with a CJK-capable alphabet, CJK-aware text segmentation, and full offline / WebAssembly compatibility — without any C/C++ dependencies (no Tesseract, no OpenCV).
+> Upstream changes are periodically merged from `robertknight/ocrs`.
+
+---
 
 **ocrs** is a Rust library and CLI tool for extracting text from images, also known as OCR (Optical Character Recognition).
 
@@ -30,8 +36,14 @@ engines.
 
 ## Language Support
 
-ocrs currently recognizes the Latin alphabet only (eg. English). Support for
-more languages is [planned](https://github.com/robertknight/ocrs/issues/8). 
+This fork extends ocrs with CJK (Chinese, Japanese, Korean) support:
+- CJK-aware text segmentation via `TextLine::segments()`
+- Alphabet helpers: `hiragana()`, `katakana()`, `cjk_unified()`, `hangul()`, `cjk_alphabet()`, `cjk_alphabet_chars()`
+- UTF-8 safe boundary utilities in `cjk_text` module
+
+The upstream ocrs recognizes the Latin alphabet only. See the [upstream issue](https://github.com/robertknight/ocrs/issues/8) for the original language support roadmap.
+
+> **WASM limitation:** `OcrEngine::recognize_text` uses `rayon` for parallelism and will panic at runtime on `wasm32-unknown-unknown`. This is an upstream issue inherited from `ocrs`. The remaining API (`detect_words`, `find_text_lines`, `cjk_text` utilities) is WASM-compatible.
 
 ## CLI installation
 
@@ -107,8 +119,8 @@ To build and run the ocrs library and CLI tool locally you will need a recent
 stable Rust version installed. Then run:
 
 ```sh
-git clone https://github.com/robertknight/ocrs.git
-cd ocrs
+git clone https://github.com/kent-tokyo/ocrs-cjk.git
+cd ocrs-cjk
 cargo run -p ocrs-cli -r -- image.png
 ```
 

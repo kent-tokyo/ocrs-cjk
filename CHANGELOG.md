@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — CJK Fork (kent-tokyo/ocrs-cjk)
+
+### Added
+
+- `cjk_text` module with CJK-aware utilities:
+  - `is_cjk(c: char) -> bool` (`const fn`) — covers Hiragana, Katakana, CJK Unified Ideographs (A–F), Hangul Syllables, Hangul Jamo, Hangul Compatibility Jamo, Hangul Jamo Extended-A/B, Bopomofo, Bopomofo Extended, CJK Symbols & Punctuation, CJK Compatibility, CJK Compatibility Forms, CJK Compatibility Ideographs, Halfwidth/Fullwidth Forms
+  - `floor_char_boundary(s: &str, byte_idx: usize) -> usize` — UTF-8 safe byte boundary (avoids panic on multibyte CJK chars)
+  - `segment(s: &str) -> impl Iterator<Item = &str>` — zero-copy script-homogeneous segmentation
+  - `hiragana()`, `katakana()`, `cjk_unified()`, `cjk_unified_ext_a()`, `hangul()` — lazy char iterators
+  - `cjk_alphabet() -> String` — Hiragana + Katakana + CJK Unified for use as `OcrEngineParams::alphabet`
+  - `cjk_alphabet_chars() -> Vec<char>` — same without intermediate UTF-8 String allocation
+- `TextLine::segments()` — CJK-aware segmentation that splits at script transitions (Latin↔CJK) without requiring space delimiters; `words()` is unchanged
+- `OcrEngine::alphabet() -> &[char]` — exposes the active alphabet for downstream NLP inspection
+- WASM `TextLine::segments()` binding in `wasm_api.rs`
+- Re-exports at crate root: `ocrs::is_cjk`, `ocrs::segment`, `ocrs::cjk_alphabet`, `ocrs::cjk_alphabet_chars`
+- Multilingual READMEs: `README_ja.md`, `README_zh.md`, `README_kr.md`
+
+### Fixed
+
+- `step.label - 1` integer underflow: CTC decode step with `label == 0` caused panic in debug builds and silent `u32::MAX` wraparound in release. Fixed with `checked_sub(1)`.
+- `DEFAULT_ALPHABET`: placeholder `E` before `ABCDE` corrected to `€` (U+20AC) to match the trained model's alphabet.
+- Hangul range off-by-one: `is_cjk` and `hangul()` iterator now correctly end at U+D7A3 (`힣`); U+D7A4–U+D7AF are unassigned and excluded.
+
+### Changed (Performance)
+
+- `OcrEngine` pre-collects `alphabet_chars: Vec<char>` at construction; eliminated per-call allocation (~168 KB for CJK alphabet) in `recognize_text`
+- `allowed_chars` filtering uses `HashSet<char>` — O(alphabet + allowed) instead of O(alphabet × allowed)
+- Alphabet label lookup changed from `alphabet.chars().nth(k)` (O(k)) to `alphabet_chars.get(k)` (O(1))
+- Line group batching uses `Vec::split_off` (move) instead of `chunk.to_vec()` (clone), eliminating `Polygon` heap copies
+- `get_text` streams output via `fmt::Write` instead of collecting intermediate `Vec<String>` before `join`
+- `line_polygon` and `rotated_rect` pre-allocate with `Vec::with_capacity`
+- `collect_text_words` shared helper eliminates duplication between `wasm_api::words()` and `wasm_api::segments()`
+
+### Known Limitations
+
+- `OcrEngine::recognize_text` uses `rayon` for parallelism and panics at runtime on `wasm32-unknown-unknown`. This is an upstream issue. Other APIs and all `cjk_text` utilities are WASM-compatible.
+- No CJK-trained model is included. Alphabet helpers and segmentation are ready; end-to-end CJK OCR requires a separately trained detection and recognition model.
+
 ## [0.12.2] - 2026-03-27
 
 - Added support for reading from stdin in CLI (https://github.com/robertknight/ocrs/pull/241)

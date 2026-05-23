@@ -159,11 +159,7 @@ impl OcrEngine {
     ) -> Result<Vec<TextLine>, String> {
         let lines: Vec<Vec<rten_imageproc::RotatedRect>> = lines
             .iter()
-            .map(|line| {
-                let words: Vec<rten_imageproc::RotatedRect> =
-                    line.words.iter().map(|word| word.rect).collect();
-                words
-            })
+            .map(|line| line.words.iter().map(|word| word.rect).collect())
             .collect();
 
         let text_lines = self
@@ -352,16 +348,26 @@ impl TextLine {
     pub fn words(&self) -> Vec<TextWord> {
         self.line
             .as_ref()
-            .map(|l| {
-                l.words()
-                    .map(|w| TextWord {
-                        text: w.to_string(),
-                        rect: RotatedRect {
-                            rect: w.rotated_rect(),
-                        },
-                    })
-                    .collect()
-            })
+            .map(|l| collect_text_words(l.words()))
             .unwrap_or_default()
     }
+
+    /// CJK-aware segmentation. Splits at script transitions (Latin↔CJK) without
+    /// requiring a space delimiter. For Latin-only text, output is identical to `words()`.
+    pub fn segments(&self) -> Vec<TextWord> {
+        self.line
+            .as_ref()
+            .map(|l| collect_text_words(l.segments()))
+            .unwrap_or_default()
+    }
+}
+
+fn collect_text_words<'a>(iter: impl Iterator<Item = super::TextWord<'a>>) -> Vec<TextWord> {
+    iter.map(|w| TextWord {
+        text: w.to_string(),
+        rect: RotatedRect {
+            rect: w.rotated_rect(),
+        },
+    })
+    .collect()
 }
