@@ -31,6 +31,9 @@ ureq = "3.3.0"
 home = "0.5.12"
 arboard = { version = "3", optional = true }
 
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+arboard = { version = "3", features = ["wayland-data-control"], optional = true }
+
 [[bin]]
 name = "ocrs"
 path = "src/main.rs"
