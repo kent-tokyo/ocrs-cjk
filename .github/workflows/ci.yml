@@ -143,16 +143,16 @@ jobs:
           path: models/
           key: ocrs-cjk-models-ppocrv5-server-v1
 
+      - name: Install Python dependencies
+        run: pip install huggingface_hub pyyaml
+
       - name: Download PP-OCRv5 models (first run only)
         if: steps.model-cache.outputs.cache-hit != 'true'
-        run: |
-          pip install huggingface_hub pyyaml
-          python3 tools/download-models.py
+        run: python3 tools/download-models.py
 
       - name: Extract alphabet (if not in cache)
         run: |
           if [ ! -f models/alphabet.txt ]; then
-            pip install pyyaml
             python3 tools/extract-alphabet.py
           fi
 

@@ -1,8 +1,8 @@
 # ocrs-cjk
 
 > **Pure Rust CJK OCR engine — converts scanned PDFs into searchable PDFs, with PaddleOCR detection, ONNX recognition, WASM-safe and offline-first.**
-> A fork of [ocrs](https://github.com/robertknight/ocrs) extended for CJK (Chinese, Japanese, Korean): full PaddleOCR model support, CJK-aware segmentation, confidence scores, searchable PDF output (ToUnicode CMap), and structured output formats (hOCR, ALTO XML, JSON) — with zero C/C++ dependencies and native `wasm32-unknown-unknown` support.
-> Upstream changes are periodically merged from `robertknight/ocrs`.
+
+A fork of [ocrs](https://github.com/robertknight/ocrs) extended for CJK (Chinese, Japanese, Korean): full PaddleOCR model support, CJK-aware segmentation, confidence scores, searchable PDF output (ToUnicode CMap), and structured output formats (hOCR, ALTO XML, JSON) — with zero C/C++ dependencies and native `wasm32-unknown-unknown` support. Upstream changes are periodically merged from `robertknight/ocrs`.
 
 **Languages:** [English](README.md) | [日本語](README_ja.md) | [简体中文](README_zh.md) | [繁體中文](README_zh-tw.md) | [한국어](README_kr.md)
 

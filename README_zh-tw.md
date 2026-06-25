@@ -1,10 +1,12 @@
 # ocrs-cjk
 
 > **Pure Rust CJK OCR 引擎 — 將掃描 PDF 轉換為可搜尋 PDF。PaddleOCR 偵測、ONNX 辨識、WASM 安全、離線優先。**
-> [ocrs](https://github.com/robertknight/ocrs) 的 Fork，全面支援 CJK（中文、日文、韓文）：完整 PaddleOCR 模型支援、CJK 感知分詞、信心分數、可搜尋 PDF 輸出（ToUnicode CMap）、結構化輸出格式（hOCR、ALTO XML、JSON）。零 C/C++ 依賴，原生 `wasm32-unknown-unknown` 支援。
-> 上游（`robertknight/ocrs`）的更新會定期合併進來。
+
+[ocrs](https://github.com/robertknight/ocrs) 的 Fork，全面支援 CJK（中文、日文、韓文）：完整 PaddleOCR 模型支援、CJK 感知分詞、信心分數、可搜尋 PDF 輸出（ToUnicode CMap）、結構化輸出格式（hOCR、ALTO XML、JSON）。零 C/C++ 依賴，原生 `wasm32-unknown-unknown` 支援。上游（`robertknight/ocrs`）的更新會定期合併進來。
 
 **語言:** [English](README.md) | [日本語](README_ja.md) | [简体中文](README_zh.md) | [繁體中文](README_zh-tw.md) | [한국어](README_kr.md)
+
+[![CI](https://github.com/kent-tokyo/ocrs-cjk/actions/workflows/ci.yml/badge.svg)](https://github.com/kent-tokyo/ocrs-cjk/actions/workflows/ci.yml)
 
 ---
 

@@ -1,10 +1,12 @@
 # ocrs-cjk
 
 > **Pure Rust CJK OCRエンジン — スキャンPDFを検索可能PDFに変換。PaddleOCR検出・ONNX認識・WASM対応・オフラインファースト。**
-> [ocrs](https://github.com/robertknight/ocrs) のフォーク。CJK（中国語・日本語・韓国語）に完全対応：PaddleOCRモデルのフルサポート、CJK対応セグメンテーション、コンフィデンススコア、検索可能PDF出力（ToUnicode CMap）、構造化出力フォーマット（hOCR、ALTO XML、JSON）。C/C++依存ゼロ、ネイティブ `wasm32-unknown-unknown` 対応。
-> アップストリーム（`robertknight/ocrs`）の変更は定期的にマージされます。
+
+[ocrs](https://github.com/robertknight/ocrs) のフォーク。CJK（中国語・日本語・韓国語）に完全対応：PaddleOCRモデルのフルサポート、CJK対応セグメンテーション、コンフィデンススコア、検索可能PDF出力（ToUnicode CMap）、構造化出力フォーマット（hOCR、ALTO XML、JSON）。C/C++依存ゼロ、ネイティブ `wasm32-unknown-unknown` 対応。アップストリーム（`robertknight/ocrs`）の変更は定期的にマージされます。
 
 **言語:** [English](README.md) | [日本語](README_ja.md) | [简体中文](README_zh.md) | [繁體中文](README_zh-tw.md) | [한국어](README_kr.md)
+
+[![CI](https://github.com/kent-tokyo/ocrs-cjk/actions/workflows/ci.yml/badge.svg)](https://github.com/kent-tokyo/ocrs-cjk/actions/workflows/ci.yml)
 
 ---
 
