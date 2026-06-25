@@ -1,45 +1,163 @@
 name: CI
 on:
+  push:
+    branches: [main]
   pull_request:
+    branches: [main]
+
 jobs:
-  ci:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job 1: native build, unit tests, lint, docs (Ubuntu + Windows)
+  # ─────────────────────────────────────────────────────────────────────────
+  test:
+    name: Test & Lint (${{ matrix.os }})
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
-    - name: Setup rust
-      run: rustup target add wasm32-unknown-unknown
-      if: ${{ matrix.os == 'ubuntu-latest' }}
-    - name: Cache
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/.crates.toml
-          ~/.cargo/.crates2.json
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-    - name: Install wasm-bindgen
-      run: cargo install wasm-bindgen-cli --version 0.2.100
-      if: ${{ matrix.os == 'ubuntu-latest' }}
-    - name: Build
-      run: cargo build
-    - name: WASM build
-      run: make wasm
-      if: ${{ matrix.os == 'ubuntu-latest' }}
-    - name: Test
-      run: make test
-    - name: Lint
-      run: |
-        make checkformatting
-        make lint
-    - name: Docs
-      run: make doc
-    - name: E2E Test
-      run: make test-e2e
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build (dev)
+        run: cargo build
+
+      - name: Unit tests
+        run: cargo test --all-features
+
+      - name: Lint (fmt + clippy)
+        run: cargo fmt --check && cargo clippy --workspace
+
+      - name: Docs
+        run: cargo doc
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job 2: WASM library build check
+  # Builds the ocrs library only (no wasm-bindgen tooling required).
+  # ─────────────────────────────────────────────────────────────────────────
+  test-wasm:
+    name: WASM Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust (with wasm32-unknown-unknown target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: wasm32-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: WASM build (ocrs library)
+        run: cargo build --target wasm32-unknown-unknown --features export-wasm -p ocrs
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job 3: English end-to-end tests
+  # Downloads the default Latin OCR models from S3 (cached across runs).
+  # ─────────────────────────────────────────────────────────────────────────
+  test-e2e-en:
+    name: E2E Tests (English)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ubuntu-e2e-en-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache default OCR models (~/.cache/ocrs)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ocrs/
+          key: ocrs-default-models-v1
+
+      - name: Build release binary
+        run: cargo build --release -p ocrs-cli
+
+      - name: Run English E2E tests
+        run: python3 tools/test-e2e.py ocrs-cli/test-data/
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job 4: CJK end-to-end tests
+  # Downloads PP-OCRv5 ONNX model (~84 MB) from Hugging Face, cached.
+  # Requires pdftotext (poppler-utils) for the searchable PDF test.
+  # ─────────────────────────────────────────────────────────────────────────
+  test-e2e-cjk:
+    name: E2E Tests (CJK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ubuntu-e2e-cjk-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install poppler-utils (for pdftotext)
+        run: sudo apt-get install -y poppler-utils
+
+      - name: Cache PP-OCRv5 models
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: models/
+          key: ocrs-cjk-models-ppocrv5-server-v1
+
+      - name: Download PP-OCRv5 models (first run only)
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: |
+          pip install huggingface_hub pyyaml
+          python3 tools/download-models.py
+
+      - name: Extract alphabet (if not in cache)
+        run: |
+          if [ ! -f models/alphabet.txt ]; then
+            pip install pyyaml
+            python3 tools/extract-alphabet.py
+          fi
+
+      - name: Build release binary (ONNX support)
+        run: cargo build --release -p ocrs-cli --features onnx
+
+      - name: Run CJK E2E tests
+        run: bash tools/test-e2e-cjk.sh models/

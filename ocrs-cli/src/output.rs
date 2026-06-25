@@ -15,6 +15,12 @@ pub enum OutputFormat {
 
     /// Output text and layout information in JSON format.
     Json,
+
+    /// Output text in hOCR HTML format (includes bounding boxes and confidence).
+    Hocr,
+
+    /// Output text in ALTO XML format (includes bounding boxes and confidence).
+    Alto,
 }
 
 /// Return the coordinates of vertices of `rr` as an array of `[x, y]` points.
@@ -47,6 +53,7 @@ fn ocr_json(args: FormatJsonArgs) -> serde_json::Value {
                 .map(|word| {
                     json!({
                         "text": word.to_string(),
+                        "confidence": (word.confidence() * 100.0).round() / 100.0,
                         "vertices": rounded_vertex_coords(&word.rotated_rect()),
                     })
                 })
@@ -98,6 +105,125 @@ pub fn format_text_output(text_lines: &[Option<TextLine>]) -> String {
 pub fn format_json_output(args: FormatJsonArgs) -> String {
     let json_data = ocr_json(args);
     serde_json::to_string_pretty(&json_data).expect("JSON formatting failed")
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Format OCR outputs as hOCR HTML.
+///
+/// The hOCR format embeds recognized text and bounding boxes in an HTML
+/// document using `ocr_page`, `ocr_line`, and `ocrx_word` CSS classes with
+/// `title` attributes containing `bbox` and `x_wconf` metadata.
+pub fn format_hocr_output(args: FormatJsonArgs) -> String {
+    let [height, width] = args.input_hw;
+    let path = html_escape(args.input_path);
+
+    let mut out = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\"\n\
+           \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">\n\
+         <html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"en\" lang=\"en\">\n\
+         <head>\n\
+           <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"/>\n\
+           <meta name=\"ocr-system\" content=\"ocrs-cjk\"/>\n\
+           <meta name=\"ocr-capabilities\" content=\"ocr_page ocr_line ocrx_word\"/>\n\
+         </head>\n\
+         <body>\n\
+           <div class=\"ocr_page\" id=\"page_1\" \
+               title=\"image &quot;{path}&quot;; bbox 0 0 {width} {height}; ppageno 0\">\n"
+    );
+
+    for (line_idx, line) in args.text_lines.iter().flatten().enumerate() {
+        let lb = line.bounding_rect();
+        out.push_str(&format!(
+            "    <span class=\"ocr_line\" id=\"line_{line_idx}\" \
+                title=\"bbox {} {} {} {}\">\n",
+            lb.left(),
+            lb.top(),
+            lb.right(),
+            lb.bottom()
+        ));
+
+        for (word_idx, word) in line.words().enumerate() {
+            let wb = word.bounding_rect();
+            let conf = (word.confidence() * 100.0).round() as u32;
+            let text = html_escape(&word.to_string());
+            out.push_str(&format!(
+                "      <span class=\"ocrx_word\" id=\"word_{line_idx}_{word_idx}\" \
+                    title=\"bbox {} {} {} {}; x_wconf {conf}\">{text}</span>\n",
+                wb.left(),
+                wb.top(),
+                wb.right(),
+                wb.bottom(),
+            ));
+        }
+
+        out.push_str("    </span>\n");
+    }
+
+    out.push_str("  </div>\n</body>\n</html>\n");
+    out
+}
+
+/// Format OCR outputs as ALTO XML.
+///
+/// Produces an ALTO v4 XML document with `TextLine` and `String` elements
+/// containing bounding boxes (`HPOS`, `VPOS`, `WIDTH`, `HEIGHT`) and
+/// word confidence (`WC`).
+pub fn format_alto_output(args: FormatJsonArgs) -> String {
+    let [height, width] = args.input_hw;
+
+    let mut out = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <alto xmlns=\"http://www.loc.gov/standards/alto/ns-v4#\">\n\
+           <Layout>\n\
+             <Page ID=\"page_0\" WIDTH=\"{width}\" HEIGHT=\"{height}\">\n\
+               <PrintSpace HPOS=\"0\" VPOS=\"0\" WIDTH=\"{width}\" HEIGHT=\"{height}\">\n\
+                 <TextBlock ID=\"block_0\" HPOS=\"0\" VPOS=\"0\" WIDTH=\"{width}\" HEIGHT=\"{height}\">\n"
+    );
+
+    for (line_idx, line) in args.text_lines.iter().flatten().enumerate() {
+        let lb = line.bounding_rect();
+        out.push_str(&format!(
+            "                   <TextLine ID=\"line_{line_idx}\" \
+                HPOS=\"{}\" VPOS=\"{}\" WIDTH=\"{}\" HEIGHT=\"{}\">\n",
+            lb.left(),
+            lb.top(),
+            lb.width(),
+            lb.height()
+        ));
+
+        for (word_idx, word) in line.words().enumerate() {
+            let wb = word.bounding_rect();
+            let conf = (word.confidence() * 1000.0).round() / 1000.0;
+            let content = html_escape(&word.to_string());
+            out.push_str(&format!(
+                "                     <String ID=\"word_{line_idx}_{word_idx}\" \
+                    HPOS=\"{}\" VPOS=\"{}\" WIDTH=\"{}\" HEIGHT=\"{}\" \
+                    WC=\"{conf:.3}\" CONTENT=\"{content}\"/>\n",
+                wb.left(),
+                wb.top(),
+                wb.width(),
+                wb.height(),
+            ));
+        }
+
+        out.push_str("                   </TextLine>\n");
+    }
+
+    out.push_str(
+        "                 </TextBlock>\n\
+               </PrintSpace>\n\
+             </Page>\n\
+           </Layout>\n\
+         </alto>\n",
+    );
+    out
 }
 
 /// Arguments for [generate_annotated_png].
@@ -202,6 +328,7 @@ mod tests {
             .map(|(i, char)| TextChar {
                 char,
                 rect: Rect::from_tlhw(0, i as i32 * width, 25, width),
+                confidence: 1.0,
             })
             .collect()
     }
@@ -268,5 +395,114 @@ mod tests {
         let annotated = generate_annotated_png(args);
 
         assert_eq!(annotated.shape(), img.permuted([2, 0, 1]).shape());
+    }
+
+    use super::{format_alto_output, format_hocr_output};
+
+    #[test]
+    fn test_hocr_cjk_no_panic() {
+        // CJK characters must not cause panics in HTML generation or escaping.
+        let lines = &[
+            Some(TextLine::new(gen_text_chars("東京オリンピック2024", 20))),
+            Some(TextLine::new(gen_text_chars("日本語テスト", 20))),
+        ];
+        let hocr = format_hocr_output(FormatJsonArgs {
+            input_path: "test_cjk.png",
+            input_hw: [80, 600],
+            text_lines: lines,
+        });
+        assert!(hocr.contains("<?xml"));
+        assert!(hocr.contains("ocr_page"));
+        assert!(hocr.contains("ocrx_word"));
+        // CJK text must appear verbatim (no garbling or escaping of CJK chars).
+        assert!(hocr.contains("東京オリンピック2024"));
+        assert!(hocr.contains("日本語テスト"));
+        // Confidence must appear as x_wconf integer.
+        assert!(hocr.contains("x_wconf 100"));
+    }
+
+    #[test]
+    fn test_alto_cjk_no_panic() {
+        // CJK characters must appear correctly in ALTO XML output.
+        let lines = &[
+            Some(TextLine::new(gen_text_chars("東京オリンピック2024", 20))),
+        ];
+        let alto = format_alto_output(FormatJsonArgs {
+            input_path: "test_cjk.png",
+            input_hw: [80, 600],
+            text_lines: lines,
+        });
+        assert!(alto.contains("<?xml"));
+        assert!(alto.contains("<alto"));
+        assert!(alto.contains("<String"));
+        assert!(alto.contains("東京オリンピック2024"));
+        // WC confidence must be a float between 0 and 1.
+        assert!(alto.contains("WC=\"1.000\""));
+    }
+
+    #[test]
+    fn test_hocr_html_escape() {
+        // Characters that need HTML escaping (<, >, &, ") must be escaped.
+        let lines = &[Some(TextLine::new(gen_text_chars(
+            "price < $5 & quality > \"good\"",
+            10,
+        )))];
+        let hocr = format_hocr_output(FormatJsonArgs {
+            input_path: "test.png",
+            input_hw: [100, 600],
+            text_lines: lines,
+        });
+        assert!(!hocr.contains(" < "), "raw '<' must be escaped");
+        assert!(!hocr.contains(" & "), "raw '&' must be escaped");
+        assert!(hocr.contains("&lt;"));
+        assert!(hocr.contains("&amp;"));
+    }
+
+    #[test]
+    fn test_confidence_aggregation() {
+        use ocrs::TextItem;
+
+        // Chars with varying confidence: mean should be computed correctly.
+        let chars = vec![
+            TextChar {
+                char: '東',
+                rect: Rect::from_tlhw(0, 0, 25, 20),
+                confidence: 0.9,
+            },
+            TextChar {
+                char: '京',
+                rect: Rect::from_tlhw(0, 20, 25, 20),
+                confidence: 0.8,
+            },
+        ];
+        let line = TextLine::new(chars);
+        let conf = line.confidence();
+        assert!(
+            (conf - 0.85).abs() < 1e-5,
+            "expected mean confidence 0.85, got {conf}"
+        );
+    }
+
+    #[test]
+    fn test_json_confidence_field_present() {
+        let lines = &[Some(TextLine::new(gen_text_chars("東京", 20)))];
+        let json = format_json_output(FormatJsonArgs {
+            input_path: "test.png",
+            input_hw: [80, 100],
+            text_lines: lines,
+        });
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let words = &parsed["paragraphs"][0]["lines"][0]["words"];
+        assert!(words.is_array());
+        let first_word = &words[0];
+        assert!(
+            first_word.get("confidence").is_some(),
+            "confidence field missing from JSON word"
+        );
+        let conf = first_word["confidence"].as_f64().unwrap();
+        assert!(
+            (0.0..=1.0).contains(&conf),
+            "confidence {conf} out of range [0, 1]"
+        );
     }
 }

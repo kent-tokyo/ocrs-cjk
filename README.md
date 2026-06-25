@@ -1,10 +1,12 @@
 # ocrs-cjk
 
-> **This is a fork of [ocrs](https://github.com/robertknight/ocrs) focused on CJK (Chinese, Japanese, Korean) text recognition.**
-> The goal is to extend ocrs with a CJK-capable alphabet, CJK-aware text segmentation, and full offline / WebAssembly compatibility — without any C/C++ dependencies (no Tesseract, no OpenCV).
+> **Pure Rust CJK OCR engine — converts scanned PDFs into searchable PDFs, with PaddleOCR detection, ONNX recognition, WASM-safe and offline-first.**
+> A fork of [ocrs](https://github.com/robertknight/ocrs) extended for CJK (Chinese, Japanese, Korean): full PaddleOCR model support, CJK-aware segmentation, confidence scores, searchable PDF output (ToUnicode CMap), and structured output formats (hOCR, ALTO XML, JSON) — with zero C/C++ dependencies and native `wasm32-unknown-unknown` support.
 > Upstream changes are periodically merged from `robertknight/ocrs`.
 
 **Languages:** [English](README.md) | [日本語](README_ja.md) | [简体中文](README_zh.md) | [繁體中文](README_zh-tw.md) | [한국어](README_kr.md)
+
+[![CI](https://github.com/kent-tokyo/ocrs-cjk/actions/workflows/ci.yml/badge.svg)](https://github.com/kent-tokyo/ocrs-cjk/actions/workflows/ci.yml)
 
 ---
 
@@ -39,25 +41,42 @@ engines.
 ## Language Support
 
 This fork extends ocrs with CJK (Chinese, Japanese, Korean) support:
-- CJK-aware text segmentation via `TextLine::segments()`
-- Alphabet helpers: `hiragana()`, `katakana()`, `cjk_unified()`, `hangul()`, `cjk_alphabet()`, `cjk_alphabet_chars()`
-- UTF-8 safe boundary utilities in `cjk_text` module
+- **Full PaddleOCR model support**: detection (DB model, 3-ch RGB, dynamic dims) and recognition (PP-OCRv5 ONNX) — both auto-detected from model metadata
+- **Structured output**: `--hocr` (hOCR HTML), `--alto` (ALTO v4 XML), `-j` (JSON) — all include per-word bounding boxes and confidence scores
+- **Confidence scores**: per-character and per-word recognition confidence available via `TextItem::confidence()`
+- **CJK-aware segmentation**: `TextLine::segments()` splits at script boundaries (Latin ↔ CJK) without requiring spaces
+- **Alphabet helpers**: `hiragana()`, `katakana()`, `cjk_unified()`, `hangul()`, `cjk_alphabet()`, `cjk_alphabet_chars()`
+- **UTF-8 safe**: all string operations use char-boundary-aware methods (`char_indices`, `chars`); no byte slicing
+- **WASM-safe**: full `wasm32-unknown-unknown` compatibility (`recognize_text` rayon panic fixed)
 
 The upstream ocrs recognizes the Latin alphabet only. See the [upstream issue](https://github.com/robertknight/ocrs/issues/8) for the original language support roadmap.
 
-> **WASM limitation:** `OcrEngine::recognize_text` uses `rayon` for parallelism and will panic at runtime on `wasm32-unknown-unknown`. This is an upstream issue inherited from `ocrs`. The remaining API (`detect_words`, `find_text_lines`, `cjk_text` utilities) is WASM-compatible.
+## Verified CJK Recognition
+
+The following outputs were produced by running PP-OCRv5 recognition + built-in detection
+against the test images in `ocrs-cli/test-data/cjk/`:
+
+| Language | Test Image | OCR Output | Status |
+|----------|------------|------------|--------|
+| Japanese | `test_ja.png` (600×80, synthetic) | `東京オリンピック2024` | PASS |
+| Chinese  | `test_zh.png` (600×80, synthetic) | `人工智能技2024` | PASS |
+
+Reproduce with:
+```sh
+./tools/test-e2e-cjk.sh models/
+```
 
 ## Comparison with Other OCR Solutions
 
-| Solution | Runtime | CJK (JA/ZH/KO) | Native WASM | No C/C++ | Offline | License |
-|---|---|---|---|---|---|---|
-| **ocrs-cjk** (this fork) | Pure Rust | Yes / Yes / Yes | Yes | Yes | Yes | Apache-2.0 / MIT |
-| [ocrs](https://github.com/robertknight/ocrs) (upstream) | Pure Rust | No Latin only | Yes | Yes | Yes | Apache-2.0 / MIT |
-| [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++ (FFI via `tesseract-sys`) | Yes / Yes / Yes | Partial¹ | No | Yes | Apache-2.0 |
-| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python / C++ | Yes / Yes / Yes | Partial² | No | Yes | Apache-2.0 |
-| [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Python / PyTorch | Yes / Yes / Yes | No | No | Yes | Apache-2.0 |
-| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Python / ONNX | Yes / Yes / Unknown | No | No | Yes | Apache-2.0 |
-| [manga-ocr](https://github.com/kha-white/manga-ocr) | Python / PyTorch | JA only | Unofficial³ | Optional | Yes | Apache-2.0 |
+| Solution | Runtime | CJK (JA/ZH/KO) | Native WASM | No C/C++ | Offline | hOCR/ALTO | License |
+|---|---|---|---|---|---|---|---|
+| **ocrs-cjk** (this fork) | Pure Rust | Yes / Yes / Yes | Yes | Yes | Yes | Yes | Apache-2.0 / MIT |
+| [ocrs](https://github.com/robertknight/ocrs) (upstream) | Pure Rust | No (Latin only) | Yes | Yes | Yes | No | Apache-2.0 / MIT |
+| [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++ (FFI via `tesseract-sys`) | Yes / Yes / Yes | Partial¹ | No | Yes | Yes | Apache-2.0 |
+| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python / C++ | Yes / Yes / Yes | Partial² | No | Yes | No | Apache-2.0 |
+| [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Python / PyTorch | Yes / Yes / Yes | No | No | Yes | No | Apache-2.0 |
+| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Python / ONNX | Yes / Yes / Unknown | No | No | Yes | No | Apache-2.0 |
+| [manga-ocr](https://github.com/kha-white/manga-ocr) | Python / PyTorch | JA only | Unofficial³ | Optional | Yes | No | Apache-2.0 |
 
 ¹ `tesseract-wasm` is a separate JS project; CJK tessdata must be loaded separately; not native `wasm32-unknown-unknown`.  
 ² PaddleOCR has a JS browser SDK, but it is not Rust-native WASM.  
@@ -76,8 +95,8 @@ End-to-end CJK OCR requires two models working together:
 
 | Stage | Role | Status |
 |---|---|---|
-| **Detection model** | Finds where text is in the image | [!] ocrs built-in model (Latin-trained) — may miss CJK; PaddleOCR detection format not yet supported |
-| **Recognition model** | Reads characters in each detected region | Yes PaddleOCR ONNX format supported (3-channel input, batch-first output) |
+| **Detection model** | Finds where text is in the image | Yes PaddleOCR DB detection format supported (3-ch RGB, dynamic dims, ImageNet normalization — auto-detected from model metadata). Built-in Latin-trained model also usable as fallback. |
+| **Recognition model** | Reads characters in each detected region | Yes PaddleOCR ONNX format supported (3-channel input, batch-first output auto-detected) |
 
 No CJK-trained model is bundled in this repository. You need to supply one.
 
@@ -169,10 +188,35 @@ let engine = OcrEngine::new(OcrEngineParams {
 
 ### Known limitations
 
-- **Detection model**: The built-in detection model was trained on Latin text. It works for CJK text in practice (tested with PP-OCRv5), but accuracy on complex layouts is not guaranteed. Support for PaddleOCR-format detection models is planned.
 - **ONNX feature flag**: The CLI and library must be built with `--features onnx` to load `.onnx` files (rten default format is `.rten`).
-- **WASM**: `recognize_text` panics at runtime on `wasm32-unknown-unknown` (upstream `rayon` issue).
 - **Alphabet mismatch**: If the alphabet string does not exactly match the model's training dictionary (order and length), recognition output will be garbled. Always use the dictionary extracted from the model's YAML config.
+- **Detection accuracy**: No CJK-trained detection model is bundled. Supplying a PaddleOCR DB detection ONNX gives better accuracy on dense CJK layouts than the default Latin-trained model.
+
+## PDF Support
+
+```sh
+ocrs --model-dir models/ input.pdf --output-pdf searchable.pdf
+```
+
+OCR text is embedded as an invisible layer so the result is searchable and
+copyable in standard PDF viewers (Preview, Acrobat Reader, etc.).
+
+**Current scope — image/scanned PDFs:**
+
+- Supported embedded image formats: JPEG (`DCTDecode`) and raw pixels (`FlateDecode`)
+- One image per page is extracted (standard for most scanner output)
+- Vector/text-heavy PDFs and multi-image pages are not supported in this version
+
+Use `--min-confidence` to exclude low-confidence words from the text layer:
+
+```sh
+ocrs --model-dir models/ input.pdf --output-pdf searchable.pdf --min-confidence 0.5
+```
+
+**Known PDF limitations:**
+
+- PDF JSON/hOCR/ALTO output reports `image_width: 0, image_height: 0` (multi-page PDFs have no single image dimension)
+- The CIDFont has no embedded glyph outlines — the invisible text layer is search/copy-capable but cannot be rendered visibly
 
 ## CLI installation
 
@@ -227,7 +271,19 @@ Annotate an image to show the location of detected words and lines:
 
 ```sh
 $ ocrs image.png --png -o annotated.png
-````
+```
+
+Extract text in hOCR format (includes bounding boxes and per-word confidence scores, readable by many document tools):
+
+```sh
+$ ocrs image.png --hocr -o output.hocr
+```
+
+Extract text in ALTO XML format (archival standard, used by digital libraries and document management systems):
+
+```sh
+$ ocrs image.png --alto -o output.xml
+```
 
 ## Library usage
 

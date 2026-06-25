@@ -28,7 +28,7 @@ pub use cjk_text::{cjk_alphabet, cjk_alphabet_chars, is_cjk, segment};
 use detection::{TextDetector, TextDetectorParams};
 use layout_analysis::find_text_lines;
 use model::Model;
-use preprocess::prepare_image;
+use preprocess::{prepare_image, prepare_image_imagenet, BLACK_VALUE as PREPROCESS_BLACK_VALUE};
 use recognition::{RecognitionOpt, TextRecognizer};
 
 pub use preprocess::{DimOrder, ImagePixels, ImageSource, ImageSourceError};
@@ -127,8 +127,12 @@ pub struct OcrEngine {
 /// Input image for OCR analysis. Instances are created using
 /// [OcrEngine::prepare_input]
 pub struct OcrInput {
-    /// CHW tensor with normalized pixel values in [BLACK_VALUE, BLACK_VALUE + 1.].
+    /// 1-channel greyscale CHW tensor with values in [BLACK_VALUE, BLACK_VALUE + 1.].
     pub(crate) image: NdTensor<f32, 3>,
+
+    /// 3-channel RGB CHW tensor with ImageNet normalization.
+    /// Only populated when a PaddleOCR DB detection model is loaded.
+    pub(crate) color_image: Option<NdTensor<f32, 3>>,
 }
 
 impl OcrEngine {
@@ -188,9 +192,45 @@ impl OcrEngine {
 
     /// Preprocess an image for use with other methods of the engine.
     pub fn prepare_input(&self, image: ImageSource) -> anyhow::Result<OcrInput> {
-        Ok(OcrInput {
-            image: prepare_image(image),
-        })
+        let needs_color = self
+            .detector
+            .as_ref()
+            .map(|d| d.needs_color_image())
+            .unwrap_or(false);
+
+        if needs_color {
+            // Produce the 3-channel ImageNet-normalised tensor first,
+            // then derive greyscale from it to avoid consuming `image` twice.
+            let color_img = prepare_image_imagenet(image);
+            let [_, height, width] = color_img.shape();
+
+            // ITU BT.601 weights for RGB → luminance (same as `prepare_image`).
+            const W: [f32; 3] = [0.299, 0.587, 0.114];
+            // ImageNet normalisation constants (must mirror those in preprocess.rs).
+            const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
+            const STD: [f32; 3] = [0.229, 0.224, 0.225];
+
+            let mut grey = NdTensor::zeros([1, height, width]);
+            for y in 0..height {
+                for x in 0..width {
+                    // Undo ImageNet normalisation to recover the [0, 1] pixel value.
+                    let unit =
+                        |c: usize| (color_img[[c, y, x]] * STD[c] + MEAN[c]).clamp(0.0, 1.0);
+                    let g = W[0] * unit(0) + W[1] * unit(1) + W[2] * unit(2);
+                    grey[[0, y, x]] = PREPROCESS_BLACK_VALUE + g;
+                }
+            }
+
+            Ok(OcrInput {
+                image: grey,
+                color_image: Some(color_img),
+            })
+        } else {
+            Ok(OcrInput {
+                image: prepare_image(image),
+                color_image: None,
+            })
+        }
     }
 
     /// Detect text words in an image.
@@ -199,7 +239,12 @@ impl OcrEngine {
     /// word found.
     pub fn detect_words(&self, input: &OcrInput) -> anyhow::Result<Vec<RotatedRect>> {
         if let Some(detector) = self.detector.as_ref() {
-            detector.detect_words(input.image.view(), self.debug)
+            let detect_view = if detector.needs_color_image() {
+                input.color_image.as_ref().map(|c| c.view()).unwrap_or(input.image.view())
+            } else {
+                input.image.view()
+            };
+            detector.detect_words(detect_view, self.debug)
         } else {
             Err(anyhow!("Detection model not loaded"))
         }
@@ -213,7 +258,12 @@ impl OcrEngine {
     /// a higher-level API that returns oriented bounding boxes of words.
     pub fn detect_text_pixels(&self, input: &OcrInput) -> anyhow::Result<NdTensor<f32, 2>> {
         if let Some(detector) = self.detector.as_ref() {
-            detector.detect_text_pixels(input.image.view(), self.debug)
+            let detect_view = if detector.needs_color_image() {
+                input.color_image.as_ref().map(|c| c.view()).unwrap_or(input.image.view())
+            } else {
+                input.image.view()
+            };
+            detector.detect_text_pixels(detect_view, self.debug)
         } else {
             Err(anyhow!("Detection model not loaded"))
         }

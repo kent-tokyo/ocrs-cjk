@@ -7,6 +7,17 @@ use rten_tensor::{NdTensor, NdTensorView, Tensor};
 use crate::model::Model;
 use crate::preprocess::BLACK_VALUE;
 
+/// Identifies the detection model format and its expected input normalization.
+enum DetectorKind {
+    /// Original ocrs detection model: 1-channel greyscale CHW, fixed input
+    /// dimensions, BLACK_VALUE-biased normalization.
+    OcrsRten,
+
+    /// PaddleOCR DB detection model: 3-channel RGB CHW, dynamic input
+    /// dimensions (multiples of 32), ImageNet normalization.
+    PaddleOcrDb,
+}
+
 /// Parameters that control post-processing of text detection model outputs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextDetectorParams {
@@ -67,6 +78,7 @@ pub struct TextDetector {
     model: Box<dyn Model + Send + Sync>,
     params: TextDetectorParams,
     input_shape: Vec<Dimension>,
+    kind: DetectorKind,
 }
 
 impl TextDetector {
@@ -78,11 +90,28 @@ impl TextDetector {
         params: TextDetectorParams,
     ) -> anyhow::Result<TextDetector> {
         let input_shape = model.input_shape()?;
+
+        // Auto-detect model kind from the channel dimension (index 1 in NCHW).
+        // PaddleOCR DB detection models expect 3-channel RGB input;
+        // the original ocrs model expects 1-channel greyscale.
+        let kind = match input_shape.get(1) {
+            Some(Dimension::Fixed(3)) => DetectorKind::PaddleOcrDb,
+            _ => DetectorKind::OcrsRten,
+        };
+
         Ok(TextDetector {
             model: Box::new(model),
             params,
             input_shape,
+            kind,
         })
+    }
+
+    /// Return true if this detector requires a 3-channel RGB input image
+    /// (prepared with ImageNet normalization) rather than the standard
+    /// 1-channel greyscale input.
+    pub(crate) fn needs_color_image(&self) -> bool {
+        matches!(self.kind, DetectorKind::PaddleOcrDb)
     }
 
     /// Return the confidence threshold used to determine whether a pixel is
@@ -123,8 +152,10 @@ impl TextDetector {
 
     /// Detect text pixels in an image.
     ///
-    /// Takes a greyscale (CHW) input image and returns a probability map
-    /// indicating whether each pixel in the input is text.
+    /// Takes a CHW input image and returns a probability map indicating whether
+    /// each pixel in the input is text. For [DetectorKind::OcrsRten] the input
+    /// must be a 1-channel greyscale image; for [DetectorKind::PaddleOcrDb]
+    /// the input must be a 3-channel ImageNet-normalised RGB image.
     ///
     /// See [detect_words](TextDetector::detect_words) for more details of
     /// expected input.
@@ -138,41 +169,6 @@ impl TextDetector {
         // Add batch dim
         let image = image.reshaped([1, img_chans, img_height, img_width]);
 
-        let [_, _, Dimension::Fixed(in_height), Dimension::Fixed(in_width)] = self.input_shape[..]
-        else {
-            return Err(anyhow!("failed to get model dims"));
-        };
-
-        // Pad small images to the input size of the text detection model. This is
-        // needed because simply scaling small images up to a fixed size may produce
-        // very large or distorted text that is hard for detection/recognition to
-        // process.
-        //
-        // Padding images is however inefficient because it means that we are
-        // potentially feeding a lot of blank pixels into the text detection model.
-        // It would be better if text detection were able to accept variable-sized
-        // inputs, within some limits.
-        let pad_bottom = (in_height as i32 - img_height as i32).max(0);
-        let pad_right = (in_width as i32 - img_width as i32).max(0);
-        let image = (pad_bottom > 0 || pad_right > 0)
-            .then(|| {
-                let pads = &[0, 0, 0, 0, 0, 0, pad_bottom, pad_right];
-                image.pad(pads.into(), BLACK_VALUE)
-            })
-            .transpose()?
-            .map(|t| t.into_cow())
-            .unwrap_or(image.as_dyn().as_cow());
-
-        // Resize images to the text detection model's input size.
-        let image = (image.size(2) != in_height || image.size(3) != in_width)
-            .then(|| image.resize_image([in_height, in_width]))
-            .transpose()?
-            .map(|t| t.into_cow())
-            .unwrap_or(image);
-
-        // Run text detection model to compute a probability mask indicating whether
-        // each pixel is part of a text word or not.
-
         // nb. RunOptions will be non_exhaustive in future.
         #[allow(clippy::field_reassign_with_default)]
         let opts = {
@@ -181,22 +177,84 @@ impl TextDetector {
             opts
         };
 
-        let text_mask: Tensor<f32> = self.model.run(image.view(), Some(opts))?;
+        match self.kind {
+            DetectorKind::OcrsRten => {
+                let [_, _, Dimension::Fixed(in_height), Dimension::Fixed(in_width)] =
+                    self.input_shape[..]
+                else {
+                    return Err(anyhow!("failed to get model dims"));
+                };
 
-        // Resize probability mask to original input size.
-        let text_mask = text_mask
-            .slice((
-                ..,
-                ..,
-                ..(in_height - pad_bottom as usize),
-                ..(in_width - pad_right as usize),
-            ))
-            .resize_image([img_height, img_width])?;
+                // Pad small images to the input size of the text detection model.
+                let pad_bottom = (in_height as i32 - img_height as i32).max(0);
+                let pad_right = (in_width as i32 - img_width as i32).max(0);
+                let image = (pad_bottom > 0 || pad_right > 0)
+                    .then(|| {
+                        let pads = &[0, 0, 0, 0, 0, 0, pad_bottom, pad_right];
+                        image.pad(pads.into(), BLACK_VALUE)
+                    })
+                    .transpose()?
+                    .map(|t| t.into_cow())
+                    .unwrap_or(image.as_dyn().as_cow());
 
-        // Remove batch, channel dims.
-        let text_mask = text_mask.into_shape([img_height, img_width]);
+                // Resize images to the text detection model's input size.
+                let image = (image.size(2) != in_height || image.size(3) != in_width)
+                    .then(|| image.resize_image([in_height, in_width]))
+                    .transpose()?
+                    .map(|t| t.into_cow())
+                    .unwrap_or(image);
 
-        Ok(text_mask)
+                let text_mask: Tensor<f32> = self.model.run(image.view(), Some(opts))?;
+
+                // Resize probability mask to original input size, cropping out
+                // the padding region first.
+                let text_mask = text_mask
+                    .slice((
+                        ..,
+                        ..,
+                        ..(in_height - pad_bottom as usize),
+                        ..(in_width - pad_right as usize),
+                    ))
+                    .resize_image([img_height, img_width])?;
+
+                // Remove batch, channel dims.
+                Ok(text_mask.into_shape([img_height, img_width]))
+            }
+
+            DetectorKind::PaddleOcrDb => {
+                // Resize to nearest multiple of 32, capping the longer side at
+                // 960 px to keep memory usage bounded.
+                const MAX_SIDE: usize = 960;
+                const STRIDE: usize = 32;
+
+                let long_side = img_height.max(img_width);
+                let scale = if long_side > MAX_SIDE {
+                    MAX_SIDE as f32 / long_side as f32
+                } else {
+                    1.0_f32
+                };
+
+                let round32 = |v: usize| -> usize {
+                    (((v as f32 * scale) / STRIDE as f32).round() as usize * STRIDE).max(STRIDE)
+                };
+                let new_h = round32(img_height);
+                let new_w = round32(img_width);
+
+                let image = (new_h != img_height || new_w != img_width)
+                    .then(|| image.resize_image([new_h, new_w]))
+                    .transpose()?
+                    .map(|t| t.into_cow())
+                    .unwrap_or(image.as_dyn().as_cow());
+
+                let text_mask: Tensor<f32> = self.model.run(image.view(), Some(opts))?;
+
+                // Resize probability mask back to original image dimensions.
+                let text_mask = text_mask.resize_image([img_height, img_width])?;
+
+                // Remove batch, channel dims.
+                Ok(text_mask.into_shape([img_height, img_width]))
+            }
+        }
     }
 }
 

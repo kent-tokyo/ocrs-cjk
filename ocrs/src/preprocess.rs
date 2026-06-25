@@ -127,6 +127,68 @@ impl<'a> ImageSource<'a> {
 /// prepared by [prepare_image].
 pub const BLACK_VALUE: f32 = -0.5;
 
+/// Standard ImageNet channel mean values (R, G, B), pixels normalised to [0, 1].
+const IMAGENET_MEAN: [f32; 3] = [0.485, 0.456, 0.406];
+
+/// Standard ImageNet channel standard deviations (R, G, B).
+const IMAGENET_STD: [f32; 3] = [0.229, 0.224, 0.225];
+
+/// Prepare an image as a 3-channel CHW tensor with ImageNet normalisation,
+/// for use with PaddleOCR detection models.
+///
+/// Each output channel `c` contains `(pixel - mean[c]) / std[c]` where
+/// pixels are in `[0, 1]`. Greyscale inputs are replicated to 3 channels;
+/// alpha channels are ignored.
+pub(crate) fn prepare_image_imagenet(img: ImageSource) -> NdTensor<f32, 3> {
+    let (height, width, n_chans, channels_first) = match img.order {
+        DimOrder::Chw => {
+            let [c, h, w] = img.data.shape();
+            (h, w, c, true)
+        }
+        DimOrder::Hwc => {
+            let [h, w, c] = img.data.shape();
+            (h, w, c, false)
+        }
+    };
+
+    let mut output = NdTensor::zeros([3, height, width]);
+
+    for y in 0..height {
+        for x in 0..width {
+            let rgb: [f32; 3] = match &img.data {
+                ImagePixels::Floats(f) => {
+                    let get = |c: usize| {
+                        if channels_first { f[[c, y, x]] } else { f[[y, x, c]] }
+                    };
+                    if n_chans == 1 {
+                        let v = get(0);
+                        [v, v, v]
+                    } else {
+                        [get(0), get(1), get(2)]
+                    }
+                }
+                ImagePixels::Bytes(b) => {
+                    let get = |c: usize| -> f32 {
+                        let byte = if channels_first { b[[c, y, x]] } else { b[[y, x, c]] };
+                        byte as f32 / 255.0
+                    };
+                    if n_chans == 1 {
+                        let v = get(0);
+                        [v, v, v]
+                    } else {
+                        [get(0), get(1), get(2)]
+                    }
+                }
+            };
+            for c in 0..3 {
+                output[[c, y, x]] = (rgb[c] - IMAGENET_MEAN[c]) / IMAGENET_STD[c];
+            }
+        }
+    }
+
+    output
+}
+
 /// Specifies the number and order of color channels in an image.
 enum Channels {
     Grey,

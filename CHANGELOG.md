@@ -5,46 +5,91 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — CJK Fork (kent-tokyo/ocrs-cjk)
+## [0.1.0] — 2026-06-25 — ocrs-cjk first release
+
+This is the first release of [ocrs-cjk](https://github.com/kent-tokyo/ocrs-cjk),
+a fork of [ocrs](https://github.com/robertknight/ocrs) with full CJK support
+and searchable PDF generation.
 
 ### Added
 
-- **PaddleOCR ONNX recognition model support**: `TextRecognizer` now auto-detects input channel count from `input_shape[1]` (1=grayscale for ocrs models, 3=RGB for PaddleOCR) and output layout from `batch_size` vs `dim[0]` (`[seq, batch, class]` → transpose; `[batch, seq, class]` → pass-through). No API changes; existing ocrs models work identically. Tested with PP-OCRv5 (Japanese CJK OCR confirmed working).
-- **`--alphabet-file <path>` CLI option**: Read the recognition alphabet from a UTF-8 file instead of a command-line string. Avoids shell-escaping corruption when passing large CJK character sets (PP-OCRv5 uses 18,384 characters). Takes precedence over `--alphabet` if both are specified.
-- `cjk_text` module with CJK-aware utilities:
-  - `is_cjk(c: char) -> bool` (`const fn`) — covers Hiragana, Katakana, CJK Unified Ideographs (A–F), Hangul Syllables, Hangul Jamo, Hangul Compatibility Jamo, Hangul Jamo Extended-A/B, Bopomofo, Bopomofo Extended, CJK Symbols & Punctuation, CJK Compatibility, CJK Compatibility Forms, CJK Compatibility Ideographs, Halfwidth/Fullwidth Forms
-  - `floor_char_boundary(s: &str, byte_idx: usize) -> usize` — UTF-8 safe byte boundary (avoids panic on multibyte CJK chars)
-  - `segment(s: &str) -> impl Iterator<Item = &str>` — zero-copy script-homogeneous segmentation
-  - `hiragana()`, `katakana()`, `cjk_unified()`, `cjk_unified_ext_a()`, `hangul()` — lazy char iterators
-  - `cjk_alphabet() -> String` — Hiragana + Katakana + CJK Unified for use as `OcrEngineParams::alphabet`
-  - `cjk_alphabet_chars() -> Vec<char>` — same without intermediate UTF-8 String allocation
-- `TextLine::segments()` — CJK-aware segmentation that splits at script transitions (Latin↔CJK) without requiring space delimiters; `words()` is unchanged
-- `OcrEngine::alphabet() -> &[char]` — exposes the active alphabet for downstream NLP inspection
-- WASM `TextLine::segments()` binding in `wasm_api.rs`
-- Re-exports at crate root: `ocrs::is_cjk`, `ocrs::segment`, `ocrs::cjk_alphabet`, `ocrs::cjk_alphabet_chars`
-- Multilingual READMEs: `README_ja.md`, `README_zh.md`, `README_kr.md`
+- **Searchable PDF pipeline** (`--output-pdf <path>`): Extract raster images from
+  scanned PDFs, OCR each page, embed an invisible text layer using a Type0/CIDFontType2
+  font with ToUnicode CMap, and save as a PDF where text can be searched and copied
+  in standard viewers. Supports JPEG (`DCTDecode`) and raw pixel (`FlateDecode`) embedded images.
+- **`--model-dir <path>` convenience flag**: Sets `--rec-model` and `--alphabet-file`
+  from a single directory path, expecting PP-OCRv5 ONNX and `alphabet.txt`.
+- **`--min-confidence <float>` flag**: Excludes words below a confidence threshold
+  from the PDF invisible text layer (range 0.0–1.0).
+- **hOCR / ALTO XML output** (`--hocr` / `--alto`): Structured output with per-word
+  bounding boxes and recognition confidence, compatible with document management
+  systems and archival standards.
+- **Per-character confidence scores**: `TextChar.confidence: f32` field; `TextItem::confidence()`
+  returns the mean over characters. Included in JSON, hOCR, and ALTO output.
+- **PaddleOCR DB detection model support**: `TextDetector` auto-detects model kind
+  from `input_shape[1]` (1ch → ocrs greyscale; 3ch → PaddleOCR DB RGB). PaddleOCR
+  path: resize to 32-multiple (max 960 px), ImageNet normalization, dynamic dims.
+  `OcrInput` gains `color_image: Option<NdTensor<f32, 3>>` for the colour path.
+- **WASM `recognize_text` panic fixed**: `rayon::into_par_iter` guarded with
+  `#[cfg(not(target_arch = "wasm32"))]`; sequential fallback added for WASM targets.
+  `cargo build --target wasm32-unknown-unknown` now succeeds for the full pipeline.
+- **PaddleOCR ONNX recognition model support**: Auto-detects channel count and
+  output layout (`[seq, batch, class]` or `[batch, seq, class]`). Tested with
+  PP-OCRv5 (Japanese and Chinese confirmed working).
+- **`--alphabet-file <path>` CLI option**: Read alphabet from a UTF-8 file to avoid
+  shell-escaping issues with large CJK character sets (PP-OCRv5 = 18,384 chars).
+- **`cjk_text` module**: `is_cjk(c: char) -> bool` (const fn, covers Hiragana,
+  Katakana, CJK Unified A–F, Hangul, Bopomofo, full-width forms), `segment()`
+  zero-copy script-homogeneous iterator, `cjk_alphabet()` / `cjk_alphabet_chars()`,
+  and `floor_char_boundary()` for UTF-8-safe byte indexing.
+- **`TextLine::segments()`**: CJK-aware segmentation splitting at Latin↔CJK script
+  transitions without requiring space delimiters.
+- **`OcrEngine::alphabet() -> &[char]`**: Exposes the active alphabet for downstream
+  NLP inspection.
+- **CJK Golden Tests**: Synthetic test images and expected outputs in
+  `ocrs-cli/test-data/cjk/`; `tools/test-e2e-cjk.sh` validates PNG recognition
+  (Japanese, Chinese) and PDF searchable output via `pdftotext`.
+- **GitHub Actions CI** (4 jobs): native+lint (Ubuntu + Windows), WASM library build,
+  English E2E, CJK E2E with PP-OCRv5 model cached via `actions/cache`. Triggers on
+  push to `main` and pull requests.
+- **`tools/extract-alphabet.py`**: Extracts the character dictionary from a PP-OCRv5
+  YAML config into `alphabet.txt`.
+- **`tools/download-models.py`**: Downloads PP-OCRv5 ONNX and YAML from Hugging Face.
+- Multilingual READMEs: `README_ja.md`, `README_zh.md`, `README_zh-tw.md`, `README_kr.md`.
 
 ### Fixed
 
-- `step.label - 1` integer underflow: CTC decode step with `label == 0` caused panic in debug builds and silent `u32::MAX` wraparound in release. Fixed with `checked_sub(1)`.
-- `DEFAULT_ALPHABET`: placeholder `E` before `ABCDE` corrected to `€` (U+20AC) to match the trained model's alphabet.
-- Hangul range off-by-one: `is_cjk` and `hangul()` iterator now correctly end at U+D7A3 (`힣`); U+D7A4–U+D7AF are unassigned and excluded.
+- **`step.label - 1` integer underflow**: CTC decode step with `label == 0` caused
+  panic in debug builds and silent `u32::MAX` wraparound in release. Fixed with `checked_sub(1)`.
+- **`DEFAULT_ALPHABET`**: Placeholder `E` corrected to `€` (U+20AC).
+- **Hangul range off-by-one**: `is_cjk` and `hangul()` now correctly end at U+D7A3.
+- **CJK layout analysis `median_word_spacing == 0`**: `min_width` degenerating to 0
+  for CJK text (which has near-zero inter-glyph spacing) now falls back to
+  `(median_height / 2).max(1)`.
+- **ToUnicode CMap compression**: Stream stored without pre-declared `Filter` so
+  `doc.compress()` correctly applies FlateDecode; previously, the CMap was stored
+  as uncompressed plaintext under a FlateDecode declaration, breaking CJK copy/search.
 
 ### Changed (Performance)
 
-- `OcrEngine` pre-collects `alphabet_chars: Vec<char>` at construction; eliminated per-call allocation (~168 KB for CJK alphabet) in `recognize_text`
-- `allowed_chars` filtering uses `HashSet<char>` — O(alphabet + allowed) instead of O(alphabet × allowed)
-- Alphabet label lookup changed from `alphabet.chars().nth(k)` (O(k)) to `alphabet_chars.get(k)` (O(1))
-- Line group batching uses `Vec::split_off` (move) instead of `chunk.to_vec()` (clone), eliminating `Polygon` heap copies
-- `get_text` streams output via `fmt::Write` instead of collecting intermediate `Vec<String>` before `join`
-- `line_polygon` and `rotated_rect` pre-allocate with `Vec::with_capacity`
-- `collect_text_words` shared helper eliminates duplication between `wasm_api::words()` and `wasm_api::segments()`
+- `OcrEngine` pre-collects `alphabet_chars: Vec<char>` at construction; eliminated
+  per-call allocation (~168 KB for CJK alphabet) in `recognize_text`.
+- `allowed_chars` filtering uses `HashSet<char>` — O(alphabet + allowed) instead of O(alphabet × allowed).
+- Alphabet label lookup changed from `alphabet.chars().nth(k)` O(k) to `alphabet_chars.get(k)` O(1).
+- Line group batching uses `Vec::split_off` (move) instead of `chunk.to_vec()` (clone).
 
 ### Known Limitations
 
-- `OcrEngine::recognize_text` uses `rayon` for parallelism and panics at runtime on `wasm32-unknown-unknown`. This is an upstream issue. Other APIs and all `cjk_text` utilities are WASM-compatible.
-- No CJK-trained model is bundled. End-to-end CJK OCR is possible by supplying an external PaddleOCR ONNX recognition model (see README for step-by-step instructions). The detection model format (PaddleOCR) is not yet supported; the built-in Latin-trained detection model works in practice.
 - Loading `.onnx` models requires building with `--features onnx` (rten default format is `.rten`).
+- PDF JSON/hOCR/ALTO output reports `image_width: 0, image_height: 0` (multi-page PDFs
+  have no single image dimension; per-page dimensions are tracked internally).
+- No CJK-trained detection model is bundled. Supplying a PaddleOCR DB detection ONNX
+  gives better accuracy on dense CJK layouts.
+
+---
+
+*The entries below document upstream [ocrs](https://github.com/robertknight/ocrs)
+releases that this fork is based on (forked from v0.12.2).*
 
 ## [0.12.2] - 2026-03-27
 
@@ -222,6 +267,6 @@ example.
  - Fixed slow OCR model downloads by changing hosting location
    (https://github.com/robertknight/rten/issues/22).
 
-## [0.1.0] - 2023-12-31
+## [0.1.0] - 2023-12-31 — upstream ocrs initial release
 
-Initial release.
+Initial release of upstream ocrs.

@@ -1,7 +1,7 @@
 # ocrs-cjk
 
-> **このリポジトリは [ocrs](https://github.com/robertknight/ocrs) のフォークです。CJK（中国語・日本語・韓国語）のテキスト認識に特化しています。**
-> CJK対応アルファベット、CJK文字列セグメンテーション、そして完全オフライン / WebAssembly 動作を目標とし、C/C++依存（Tesseract、OpenCVなど）を一切持ちません。
+> **Pure Rust CJK OCRエンジン — スキャンPDFを検索可能PDFに変換。PaddleOCR検出・ONNX認識・WASM対応・オフラインファースト。**
+> [ocrs](https://github.com/robertknight/ocrs) のフォーク。CJK（中国語・日本語・韓国語）に完全対応：PaddleOCRモデルのフルサポート、CJK対応セグメンテーション、コンフィデンススコア、検索可能PDF出力（ToUnicode CMap）、構造化出力フォーマット（hOCR、ALTO XML、JSON）。C/C++依存ゼロ、ネイティブ `wasm32-unknown-unknown` 対応。
 > アップストリーム（`robertknight/ocrs`）の変更は定期的にマージされます。
 
 **言語:** [English](README.md) | [日本語](README_ja.md) | [简体中文](README_zh.md) | [繁體中文](README_zh-tw.md) | [한국어](README_kr.md)
@@ -31,25 +31,41 @@ ocrs は現在アーリープレビュー段階です。商用OCRエンジンよ
 ## 言語サポート
 
 このフォークはCJK（中国語・日本語・韓国語）サポートを追加しています：
-- `TextLine::segments()` によるCJK対応テキスト分割
-- アルファベットヘルパー: `hiragana()`, `katakana()`, `cjk_unified()`, `hangul()`, `cjk_alphabet()`, `cjk_alphabet_chars()`
-- `cjk_text` モジュールのUTF-8安全なバイト境界ユーティリティ
+- **PaddleOCRモデル完全対応**: 検出（DBモデル、3ch RGB、動的サイズ）と認識（PP-OCRv5 ONNX）をモデルメタデータから自動判定
+- **構造化出力**: `--hocr`（hOCR HTML）、`--alto`（ALTO v4 XML）、`-j`（JSON）— すべて単語単位バウンディングボックスとコンフィデンスを含む
+- **コンフィデンススコア**: `TextItem::confidence()` で文字・単語単位の認識信頼度を取得可能
+- **CJK対応セグメンテーション**: `TextLine::segments()` がスペースなしでスクリプト境界（ラテン ↔ CJK）で分割
+- **アルファベットヘルパー**: `hiragana()`, `katakana()`, `cjk_unified()`, `hangul()`, `cjk_alphabet()`, `cjk_alphabet_chars()`
+- **UTF-8安全**: すべての文字列操作は `char_indices`・`chars` などのchar境界対応メソッドを使用（バイトスライスなし）
+- **WASM完全対応**: `recognize_text` の rayon パニックを修正済み — `wasm32-unknown-unknown` でフルパイプラインが動作
 
 アップストリームの ocrs はラテン文字のみ対応しています。元の言語サポートロードマップは [upstream issue](https://github.com/robertknight/ocrs/issues/8) を参照してください。
 
-> **WASM制限:** `OcrEngine::recognize_text` は並列処理に `rayon` を使用しており、`wasm32-unknown-unknown` ではランタイムパニックが発生します。これはアップストリームから引き継いだ既知の問題です。それ以外のAPI（`detect_words`, `find_text_lines`, `cjk_text` ユーティリティ）はWASM互換です。
+## CJK認識の動作確認
+
+`ocrs-cli/test-data/cjk/` のテスト画像を PP-OCRv5 認識モデル + 付属検出モデルで処理した結果：
+
+| 言語 | テスト画像 | OCR出力 | 結果 |
+|------|-----------|--------|------|
+| 日本語 | `test_ja.png`（600×80、合成画像） | `東京オリンピック2024` | PASS |
+| 中国語 | `test_zh.png`（600×80、合成画像） | `人工智能技2024` | PASS |
+
+再現方法：
+```sh
+./tools/test-e2e-cjk.sh models/
+```
 
 ## 他のOCRソリューションとの比較
 
-| ソリューション | ランタイム | CJK (JA/ZH/KO) | ネイティブWASM | C/C++不要 | オフライン | ライセンス |
-|---|---|---|---|---|---|---|
-| **ocrs-cjk**（このフォーク） | Pure Rust | Yes / Yes / Yes | Yes | Yes | Yes | Apache-2.0 / MIT |
-| [ocrs](https://github.com/robertknight/ocrs)（upstream） | Pure Rust | No ラテン文字のみ | Yes | Yes | Yes | Apache-2.0 / MIT |
-| [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++（`tesseract-sys` FFI） | Yes / Yes / Yes | 部分的¹ | No | Yes | Apache-2.0 |
-| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python / C++ | Yes / Yes / Yes | 部分的² | No | Yes | Apache-2.0 |
-| [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Python / PyTorch | Yes / Yes / Yes | No | No | Yes | Apache-2.0 |
-| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Python / ONNX | Yes / Yes / Unknown | No | No | Yes | Apache-2.0 |
-| [manga-ocr](https://github.com/kha-white/manga-ocr) | Python / PyTorch | 日本語のみ | 非公式³ | 任意 | Yes | Apache-2.0 |
+| ソリューション | ランタイム | CJK (JA/ZH/KO) | ネイティブWASM | C/C++不要 | オフライン | hOCR/ALTO | ライセンス |
+|---|---|---|---|---|---|---|---|
+| **ocrs-cjk**（このフォーク） | Pure Rust | Yes / Yes / Yes | Yes | Yes | Yes | Yes | Apache-2.0 / MIT |
+| [ocrs](https://github.com/robertknight/ocrs)（upstream） | Pure Rust | No（ラテン文字のみ） | Yes | Yes | Yes | No | Apache-2.0 / MIT |
+| [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++（`tesseract-sys` FFI） | Yes / Yes / Yes | 部分的¹ | No | Yes | Yes | Apache-2.0 |
+| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python / C++ | Yes / Yes / Yes | 部分的² | No | Yes | No | Apache-2.0 |
+| [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Python / PyTorch | Yes / Yes / Yes | No | No | Yes | No | Apache-2.0 |
+| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Python / ONNX | Yes / Yes / Unknown | No | No | Yes | No | Apache-2.0 |
+| [manga-ocr](https://github.com/kha-white/manga-ocr) | Python / PyTorch | 日本語のみ | 非公式³ | 任意 | Yes | No | Apache-2.0 |
 
 ¹ `tesseract-wasm` は別プロジェクト（JS）。CJK tessdata の別途ロードが必要。`wasm32-unknown-unknown` ネイティブではない。  
 ² PaddleOCR には JS ブラウザ SDK があるが、Rust ネイティブ WASM ではない。  
@@ -68,7 +84,7 @@ CJK OCRを実際に動かすには、以下の2つのモデルが必要です：
 
 | ステージ | 役割 | 状態 |
 |---|---|---|
-| **検出モデル** | 画像内のテキスト領域を見つける | [!] ocrs付属のラテン文字学習済みモデルを使用可能（CJK検出精度は未検証）。PaddleOCR形式の検出モデルは未対応 |
+| **検出モデル** | 画像内のテキスト領域を見つける | Yes PaddleOCR DB検出モデル対応済み（3ch RGB、動的サイズ、ImageNet正規化 — モデルメタデータから自動検出）。付属のラテン文字学習済みモデルもフォールバックとして使用可能 |
 | **認識モデル** | 検出領域の文字を読む | Yes PaddleOCR ONNX形式に対応済み（3チャンネル入力・バッチファースト出力を自動検出） |
 
 このリポジトリにはCJK学習済みモデルは含まれていません。別途入手する必要があります。
@@ -161,10 +177,9 @@ let engine = OcrEngine::new(OcrEngineParams {
 
 ### 既知の制限事項
 
-- **検出モデル**: 付属の検出モデルはラテン文字で学習されています。実際には PP-OCRv5 との組み合わせでCJK OCRが動作することを確認済みですが、複雑なレイアウトでの精度は保証されません。PaddleOCR形式の検出モデルへの対応は予定中です。
 - **ONNXフィーチャーフラグ**: `.onnx` ファイルを読み込むには `--features onnx` が必要です（rtenのデフォルト形式は `.rten`）。
-- **WASM**: `recognize_text` は `wasm32-unknown-unknown` でランタイムパニックが発生します（上流の `rayon` の問題）。
 - **アルファベット不一致**: `alphabet` 文字列がモデルの学習辞書と順番・長さが一致しない場合、認識結果が文字化けします。必ずモデルのYAML設定から取り出した辞書を使用してください。
+- **検出精度**: CJK学習済みの検出モデルは同梱されていません。PaddleOCR DB検出ONNXを指定することで、デフォルトのラテン文字学習済みモデルより高精度なCJKレイアウト検出が可能です。
 
 ## CLIのインストール
 
@@ -215,6 +230,18 @@ $ ocrs image.png --json -o content.json
 
 ```sh
 $ ocrs image.png --png -o annotated.png
+```
+
+テキストをhOCR形式で抽出する（バウンディングボックスと単語ごとのコンフィデンス付き、多くのドキュメントツールで読み込み可能）：
+
+```sh
+$ ocrs image.png --hocr -o output.hocr
+```
+
+テキストをALTO XML形式で抽出する（アーカイブ標準、デジタルライブラリや文書管理システムで使用）：
+
+```sh
+$ ocrs image.png --alto -o output.xml
 ```
 
 ## ライブラリとしての使い方

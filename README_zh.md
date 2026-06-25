@@ -1,7 +1,7 @@
 # ocrs-cjk
 
-> **本项目是 [ocrs](https://github.com/robertknight/ocrs) 的 Fork，专注于 CJK（中文、日文、韩文）文字识别。**
-> 目标是在 ocrs 基础上扩展 CJK 字符集、CJK 感知文本分词，并实现完全离线 / WebAssembly 兼容——不依赖任何 C/C++ 库（无 Tesseract，无 OpenCV）。
+> **Pure Rust CJK OCR 引擎 — 将扫描 PDF 转换为可搜索 PDF。PaddleOCR 检测、ONNX 识别、WASM 兼容、离线优先。**
+> [ocrs](https://github.com/robertknight/ocrs) 的 Fork，全面支持 CJK（中文、日文、韩文）：完整 PaddleOCR 模型支持、CJK 感知分词、置信度分数、可搜索 PDF 输出（ToUnicode CMap）、结构化输出格式（hOCR、ALTO XML、JSON）。零 C/C++ 依赖，原生 `wasm32-unknown-unknown` 支持。
 > 上游（`robertknight/ocrs`）的更新会定期合并进来。
 
 **语言:** [English](README.md) | [日本語](README_ja.md) | [简体中文](README_zh.md) | [繁體中文](README_zh-tw.md) | [한국어](README_kr.md)
@@ -31,25 +31,27 @@ ocrs 目前处于早期预览阶段，识别错误率高于商业 OCR 引擎。
 ## 语言支持
 
 本 Fork 已扩展 CJK（中文、日文、韩文）支持：
-- 通过 `TextLine::segments()` 实现 CJK 感知文本分词
-- 字母表辅助函数：`hiragana()`, `katakana()`, `cjk_unified()`, `hangul()`, `cjk_alphabet()`, `cjk_alphabet_chars()`
-- `cjk_text` 模块中的 UTF-8 安全字节边界工具
+- **完整 PaddleOCR 模型支持**：检测（DB 模型，3 通道 RGB，动态尺寸）与识别（PP-OCRv5 ONNX）均从模型元数据自动识别
+- **结构化输出**：`--hocr`（hOCR HTML）、`--alto`（ALTO v4 XML）、`-j`（JSON）— 均含逐词边界框与置信度
+- **置信度分数**：通过 `TextItem::confidence()` 获取字符级与词级识别置信度
+- **CJK 感知分词**：`TextLine::segments()` 无需空格即可在脚本边界（拉丁 ↔ CJK）进行分割
+- **字母表辅助函数**：`hiragana()`, `katakana()`, `cjk_unified()`, `hangul()`, `cjk_alphabet()`, `cjk_alphabet_chars()`
+- **UTF-8 安全**：所有字符串操作均使用字符边界感知方法（`char_indices`、`chars`），不进行字节切片
+- **WASM 完全兼容**：`recognize_text` 的 rayon panic 已修复 — 在 `wasm32-unknown-unknown` 上完整流水线可运行
 
 上游 ocrs 仅支持拉丁字母。原始语言支持路线图请参阅 [upstream issue](https://github.com/robertknight/ocrs/issues/8)。
 
-> **WASM 限制：** `OcrEngine::recognize_text` 使用 `rayon` 进行并行处理，在 `wasm32-unknown-unknown` 目标上会发生运行时 panic。这是从上游继承的已知问题。其余 API（`detect_words`、`find_text_lines`、`cjk_text` 工具）均兼容 WASM。
-
 ## 与其他 OCR 解决方案的对比
 
-| 解决方案 | 运行时 | CJK (JA/ZH/KO) | 原生 WASM | 无 C/C++ | 离线 | 许可证 |
-|---|---|---|---|---|---|---|
-| **ocrs-cjk**（本 Fork） | Pure Rust | Yes / Yes / Yes | Yes | Yes | Yes | Apache-2.0 / MIT |
-| [ocrs](https://github.com/robertknight/ocrs)（上游） | Pure Rust | No 仅拉丁字母 | Yes | Yes | Yes | Apache-2.0 / MIT |
-| [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++（`tesseract-sys` FFI） | Yes / Yes / Yes | 部分¹ | No | Yes | Apache-2.0 |
-| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python / C++ | Yes / Yes / Yes | 部分² | No | Yes | Apache-2.0 |
-| [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Python / PyTorch | Yes / Yes / Yes | No | No | Yes | Apache-2.0 |
-| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Python / ONNX | Yes / Yes / Unknown | No | No | Yes | Apache-2.0 |
-| [manga-ocr](https://github.com/kha-white/manga-ocr) | Python / PyTorch | 仅日语 | 非官方³ | 可选 | Yes | Apache-2.0 |
+| 解决方案 | 运行时 | CJK (JA/ZH/KO) | 原生 WASM | 无 C/C++ | 离线 | hOCR/ALTO | 许可证 |
+|---|---|---|---|---|---|---|---|
+| **ocrs-cjk**（本 Fork） | Pure Rust | Yes / Yes / Yes | Yes | Yes | Yes | Yes | Apache-2.0 / MIT |
+| [ocrs](https://github.com/robertknight/ocrs)（上游） | Pure Rust | No（仅拉丁字母） | Yes | Yes | Yes | No | Apache-2.0 / MIT |
+| [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++（`tesseract-sys` FFI） | Yes / Yes / Yes | 部分¹ | No | Yes | Yes | Apache-2.0 |
+| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python / C++ | Yes / Yes / Yes | 部分² | No | Yes | No | Apache-2.0 |
+| [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Python / PyTorch | Yes / Yes / Yes | No | No | Yes | No | Apache-2.0 |
+| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Python / ONNX | Yes / Yes / Unknown | No | No | Yes | No | Apache-2.0 |
+| [manga-ocr](https://github.com/kha-white/manga-ocr) | Python / PyTorch | 仅日语 | 非官方³ | 可选 | Yes | No | Apache-2.0 |
 
 ¹ `tesseract-wasm` 为独立 JS 项目；CJK tessdata 需单独加载；非原生 `wasm32-unknown-unknown`。  
 ² PaddleOCR 有 JS 浏览器 SDK，但并非 Rust 原生 WASM。  
@@ -68,7 +70,7 @@ ocrs 目前处于早期预览阶段，识别错误率高于商业 OCR 引擎。
 
 | 阶段 | 作用 | 状态 |
 |---|---|---|
-| **检测模型** | 定位图像中的文本区域 | [!] 可使用 ocrs 内置的拉丁文训练模型（CJK 检测精度未经验证）；PaddleOCR 格式的检测模型尚不支持 |
+| **检测模型** | 定位图像中的文本区域 | Yes 已支持 PaddleOCR DB 检测模型（3 通道 RGB、动态尺寸、ImageNet 归一化 — 从模型元数据自动检测）。内置拉丁文训练模型可作为后备使用 |
 | **识别模型** | 读取检测区域中的字符 | Yes 已支持 PaddleOCR ONNX 格式（自动检测 3 通道输入与 batch-first 输出） |
 
 本仓库不包含 CJK 训练模型，需要自行获取。

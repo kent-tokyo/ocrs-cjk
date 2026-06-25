@@ -1,7 +1,7 @@
 # ocrs-cjk
 
-> **本專案是 [ocrs](https://github.com/robertknight/ocrs) 的 Fork，專注於 CJK（中文、日文、韓文）文字辨識。**
-> 目標是在 ocrs 基礎上擴展 CJK 字元集、CJK 感知文本分詞，並實現完全離線 / WebAssembly 相容——不依賴任何 C/C++ 函式庫（無 Tesseract，無 OpenCV）。
+> **Pure Rust CJK OCR 引擎 — 將掃描 PDF 轉換為可搜尋 PDF。PaddleOCR 偵測、ONNX 辨識、WASM 安全、離線優先。**
+> [ocrs](https://github.com/robertknight/ocrs) 的 Fork，全面支援 CJK（中文、日文、韓文）：完整 PaddleOCR 模型支援、CJK 感知分詞、信心分數、可搜尋 PDF 輸出（ToUnicode CMap）、結構化輸出格式（hOCR、ALTO XML、JSON）。零 C/C++ 依賴，原生 `wasm32-unknown-unknown` 支援。
 > 上游（`robertknight/ocrs`）的更新會定期合併進來。
 
 **語言:** [English](README.md) | [日本語](README_ja.md) | [简体中文](README_zh.md) | [繁體中文](README_zh-tw.md) | [한국어](README_kr.md)
@@ -31,25 +31,27 @@ ocrs 目前處於早期預覽階段，辨識錯誤率高於商業 OCR 引擎。
 ## 語言支援
 
 本 Fork 已擴展 CJK（中文、日文、韓文）支援：
-- 透過 `TextLine::segments()` 實現 CJK 感知文本分詞
-- 字母表輔助函式：`hiragana()`, `katakana()`, `cjk_unified()`, `hangul()`, `cjk_alphabet()`, `cjk_alphabet_chars()`
-- `cjk_text` 模組中的 UTF-8 安全位元組邊界工具
+- **完整 PaddleOCR 模型支援**：偵測（DB 模型，3 通道 RGB，動態尺寸）與辨識（PP-OCRv5 ONNX）均從模型元資料自動辨識
+- **結構化輸出**：`--hocr`（hOCR HTML）、`--alto`（ALTO v4 XML）、`-j`（JSON）— 均含逐詞邊界框與信心分數
+- **信心分數**：透過 `TextItem::confidence()` 取得字元級與詞級辨識信心度
+- **CJK 感知分詞**：`TextLine::segments()` 無需空格即可在文字邊界（拉丁 ↔ CJK）進行分割
+- **字母表輔助函式**：`hiragana()`, `katakana()`, `cjk_unified()`, `hangul()`, `cjk_alphabet()`, `cjk_alphabet_chars()`
+- **UTF-8 安全**：所有字串處理均使用字元邊界感知方法（`char_indices`、`chars`），不進行位元組切片
+- **WASM 完全相容**：`recognize_text` 的 rayon panic 已修復 — 在 `wasm32-unknown-unknown` 上完整流水線可執行
 
 上游 ocrs 僅支援拉丁字母。原始語言支援路線圖請參閱 [upstream issue](https://github.com/robertknight/ocrs/issues/8)。
 
-> **WASM 限制：** `OcrEngine::recognize_text` 使用 `rayon` 進行平行處理，在 `wasm32-unknown-unknown` 目標上會發生執行時 panic。這是從上游繼承的已知問題。其餘 API（`detect_words`、`find_text_lines`、`cjk_text` 工具）均相容 WASM。
-
 ## 與其他 OCR 解決方案的比較
 
-| 解決方案 | 執行時 | CJK (JA/ZH/KO) | 原生 WASM | 無 C/C++ | 離線 | 授權 |
-|---|---|---|---|---|---|---|
-| **ocrs-cjk**（本 Fork） | Pure Rust | Yes / Yes / Yes | Yes | Yes | Yes | Apache-2.0 / MIT |
-| [ocrs](https://github.com/robertknight/ocrs)（上游） | Pure Rust | No 僅拉丁字母 | Yes | Yes | Yes | Apache-2.0 / MIT |
-| [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++（`tesseract-sys` FFI） | Yes / Yes / Yes | 部分¹ | No | Yes | Apache-2.0 |
-| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python / C++ | Yes / Yes / Yes | 部分² | No | Yes | Apache-2.0 |
-| [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Python / PyTorch | Yes / Yes / Yes | No | No | Yes | Apache-2.0 |
-| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Python / ONNX | Yes / Yes / Unknown | No | No | Yes | Apache-2.0 |
-| [manga-ocr](https://github.com/kha-white/manga-ocr) | Python / PyTorch | 僅日文 | 非官方³ | 可選 | Yes | Apache-2.0 |
+| 解決方案 | 執行時 | CJK (JA/ZH/KO) | 原生 WASM | 無 C/C++ | 離線 | hOCR/ALTO | 授權 |
+|---|---|---|---|---|---|---|---|
+| **ocrs-cjk**（本 Fork） | Pure Rust | Yes / Yes / Yes | Yes | Yes | Yes | Yes | Apache-2.0 / MIT |
+| [ocrs](https://github.com/robertknight/ocrs)（上游） | Pure Rust | No（僅拉丁字母） | Yes | Yes | Yes | No | Apache-2.0 / MIT |
+| [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++（`tesseract-sys` FFI） | Yes / Yes / Yes | 部分¹ | No | Yes | Yes | Apache-2.0 |
+| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python / C++ | Yes / Yes / Yes | 部分² | No | Yes | No | Apache-2.0 |
+| [EasyOCR](https://github.com/JaidedAI/EasyOCR) | Python / PyTorch | Yes / Yes / Yes | No | No | Yes | No | Apache-2.0 |
+| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Python / ONNX | Yes / Yes / Unknown | No | No | Yes | No | Apache-2.0 |
+| [manga-ocr](https://github.com/kha-white/manga-ocr) | Python / PyTorch | 僅日文 | 非官方³ | 可選 | Yes | No | Apache-2.0 |
 
 ¹ `tesseract-wasm` 為獨立 JS 專案；CJK tessdata 需單獨載入；非原生 `wasm32-unknown-unknown`。  
 ² PaddleOCR 有 JS 瀏覽器 SDK，但並非 Rust 原生 WASM。  

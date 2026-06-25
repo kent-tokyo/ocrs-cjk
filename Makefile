@@ -35,6 +35,10 @@ test:
 test-e2e:
 	python tools/test-e2e.py ocrs-cli/test-data/
 
+.PHONY: test-e2e-cjk
+test-e2e-cjk:
+	bash tools/test-e2e-cjk.sh models/
+
 .PHONY: update-e2e
 update-e2e:
 	python tools/test-e2e.py --update ocrs-cli/test-data/

@@ -5,6 +5,7 @@ target/
 
 # Pre-trained models
 *.rten
+*.onnx
 *.txt
 .claude/
 CLAUDE.md

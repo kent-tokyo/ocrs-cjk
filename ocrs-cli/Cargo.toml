@@ -1,6 +1,6 @@
 [package]
 name = "ocrs-cli"
-version = "0.12.2"
+version = "0.1.0"
 edition = "2021"
 authors = ["Robert Knight", "kent-tokyo"]
 description = "OCR CLI tool for extracting text from images, with CJK (Chinese, Japanese, Korean) support"
@@ -15,7 +15,7 @@ serde_json = "1.0.149"
 rten = { workspace = true }
 rten-imageproc = { workspace = true }
 rten-tensor = { workspace = true }
-ocrs = { path = "../ocrs", version = "0.12.2", features = ["rten"] }
+ocrs = { path = "../ocrs", version = "0.1.0", features = ["rten"] }
 lexopt = "0.3.2"
 url = "2.5.4"
 anyhow = "1.0.102"
@@ -30,6 +30,7 @@ clipboard = ["arboard"]
 ureq = "3.3.0"
 home = "0.5.12"
 arboard = { version = "3", optional = true }
+lopdf = "0.34"
 
 [[bin]]
 name = "ocrs"

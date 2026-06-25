@@ -11,6 +11,15 @@ pub trait TextItem {
     /// Return the sequence of characters that make up this item.
     fn chars(&self) -> &[TextChar];
 
+    /// Return the mean recognition confidence across all characters, in [0, 1].
+    fn confidence(&self) -> f32 {
+        let chars = self.chars();
+        if chars.is_empty() {
+            return 0.0;
+        }
+        chars.iter().map(|c| c.confidence).sum::<f32>() / chars.len() as f32
+    }
+
     /// Return the bounding rectangle of all characters in this item.
     fn bounding_rect(&self) -> Rect {
         bounding_rect(self.chars().iter().map(|c| &c.rect)).expect("expected valid rect")
@@ -50,6 +59,9 @@ pub struct TextChar {
 
     /// Approximate bounding rectangle of character in input image.
     pub rect: Rect,
+
+    /// Recognition confidence in [0, 1].
+    pub confidence: f32,
 }
 
 /// Result of recognizing a line of text.
@@ -161,6 +173,7 @@ mod tests {
             .map(|(i, char)| TextChar {
                 char,
                 rect: Rect::from_tlhw(0, i as i32 * width, 25, width),
+                confidence: 1.0,
             })
             .collect()
     }

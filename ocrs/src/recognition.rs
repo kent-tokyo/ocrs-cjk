@@ -1,9 +1,12 @@
 use core::f32;
 use std::collections::HashMap;
 
+#[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 use rten::ctc::{CtcDecoder, CtcHypothesis};
-use rten::{thread_pool, Dimension, FloatOperators};
+use rten::{Dimension, FloatOperators};
+#[cfg(not(target_arch = "wasm32"))]
+use rten::thread_pool;
 use rten_imageproc::{
     bounding_rect, BoundingRect, Line, Point, PointF, Polygon, Rect, RotatedRect,
 };
@@ -236,6 +239,11 @@ struct LineRecResult {
 
     /// Output label sequence produced by CTC decoding.
     ctc_output: CtcHypothesis,
+
+    /// Per-character confidence values, one per entry in `ctc_output.steps()`.
+    /// Each value is in [0, 1], derived from the raw model output at the
+    /// decoded character position.
+    char_confidences: Vec<f32>,
 }
 
 /// Combine information from the input and output of text line recognition
@@ -294,6 +302,8 @@ fn text_lines_from_recognition_results(
                         .and_then(|idx| alphabet_chars.get(idx as usize).copied())
                         .unwrap_or('?');
 
+                    let confidence = result.char_confidences.get(i).copied().unwrap_or(0.0);
+
                     Some(TextChar {
                         char,
                         rect: polygon_slice_bounding_rect(
@@ -302,6 +312,7 @@ fn text_lines_from_recognition_results(
                             end_x,
                         )
                         .expect("invalid X coords"),
+                        confidence,
                     })
                 })
                 .collect();
@@ -486,6 +497,7 @@ impl TextRecognizer {
         let alphabet_len = alphabet_chars.len();
 
         // Run text recognition on batches of lines.
+        #[cfg(not(target_arch = "wasm32"))]
         let batch_rec_results: Result<Vec<Vec<LineRecResult>>, ModelRunError> =
             thread_pool().run(|| {
                 line_groups
@@ -539,11 +551,24 @@ impl TextRecognizer {
                                         decoder.decode_beam(input_seq, width)
                                     }
                                 };
+
+                                let char_confidences: Vec<f32> = ctc_output
+                                    .steps()
+                                    .iter()
+                                    .map(|step| {
+                                        input_seq_slice
+                                            [[step.pos as usize, step.label as usize]]
+                                            .exp()
+                                            .clamp(0.0, 1.0)
+                                    })
+                                    .collect();
+
                                 LineRecResult {
                                     line,
                                     rec_input_len: group_width as usize,
                                     ctc_input_len,
                                     ctc_output,
+                                    char_confidences,
                                 }
                             })
                             .collect::<Vec<_>>();
@@ -552,6 +577,82 @@ impl TextRecognizer {
                     })
                     .collect()
             });
+
+        #[cfg(target_arch = "wasm32")]
+        let batch_rec_results: Result<Vec<Vec<LineRecResult>>, ModelRunError> = line_groups
+            .into_iter()
+            .map(|(group_width, lines)| {
+                if debug {
+                    println!(
+                        "Processing group of {} lines of width {}",
+                        lines.len(),
+                        group_width,
+                    );
+                }
+
+                let rec_input = prepare_text_line_batch(
+                    &image,
+                    &lines,
+                    page_rect,
+                    rec_img_height as usize,
+                    group_width as usize,
+                    self.input_channels,
+                );
+
+                let mut rec_output = self.run(rec_input)?;
+
+                if alphabet_len + 1 != rec_output.size(2) {
+                    return Err(ModelRunError::WrongOutput(format!(
+                        "output column count ({}) does not match alphabet size ({})",
+                        rec_output.size(2),
+                        alphabet_len + 1
+                    )));
+                }
+
+                let ctc_input_len = rec_output.shape()[1];
+
+                let line_rec_results = lines
+                    .into_iter()
+                    .enumerate()
+                    .map(|(group_line_index, line)| {
+                        let decoder = CtcDecoder::new();
+
+                        let mut input_seq_slice = rec_output.slice_mut([group_line_index]);
+                        let input_seq = Self::filter_excluded_char_labels(
+                            excluded_char_labels,
+                            &mut input_seq_slice,
+                        );
+
+                        let ctc_output = match decode_method {
+                            DecodeMethod::Greedy => decoder.decode_greedy(input_seq),
+                            DecodeMethod::BeamSearch { width } => {
+                                decoder.decode_beam(input_seq, width)
+                            }
+                        };
+
+                        let char_confidences: Vec<f32> = ctc_output
+                            .steps()
+                            .iter()
+                            .map(|step| {
+                                input_seq_slice[[step.pos as usize, step.label as usize]]
+                                    .exp()
+                                    .clamp(0.0, 1.0)
+                            })
+                            .collect();
+
+                        LineRecResult {
+                            line,
+                            rec_input_len: group_width as usize,
+                            ctc_input_len,
+                            ctc_output,
+                            char_confidences,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                Ok(line_rec_results)
+            })
+            .collect();
 
         let mut line_rec_results: Vec<LineRecResult> =
             batch_rec_results?.into_iter().flatten().collect();

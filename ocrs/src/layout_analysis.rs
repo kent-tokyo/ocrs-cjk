@@ -142,7 +142,14 @@ pub fn find_block_separators(words: &[RotatedRect]) -> Vec<Rect> {
         .iter()
         .map(|r| r.bounding_rect().integral_bounding_rect())
         .collect();
-    let min_width = median_word_spacing * 3;
+    // When `median_word_spacing` is 0 (CJK text has near-zero inter-glyph gaps),
+    // fall back to half the median character height so that column separators
+    // are still detectable.
+    let min_width = if median_word_spacing == 0 {
+        (median_height / 2).max(1)
+    } else {
+        median_word_spacing * 3
+    };
     let min_height = (3 * median_height.max(0)) as u32;
 
     max_empty_rects(

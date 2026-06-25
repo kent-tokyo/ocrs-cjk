@@ -12,9 +12,11 @@ use rten_tensor::{NdTensor, NdTensorView};
 mod models;
 use models::{load_model, ModelSource};
 mod output;
+#[cfg(not(target_arch = "wasm32"))]
+mod pdf;
 use output::{
-    format_json_output, format_text_output, generate_annotated_png, FormatJsonArgs,
-    GeneratePngArgs, OutputFormat,
+    format_alto_output, format_hocr_output, format_json_output, format_text_output,
+    generate_annotated_png, FormatJsonArgs, GeneratePngArgs, OutputFormat,
 };
 
 /// Write a CHW image to a PNG file in `path`.
@@ -126,6 +128,17 @@ struct Args {
     /// Path to a file containing the alphabet (all characters concatenated, no separator).
     /// Useful for large CJK alphabets where passing characters via --alphabet is impractical.
     alphabet_file: Option<String>,
+
+    /// Convenience flag: sets rec-model and alphabet-file from a directory.
+    /// Expects {dir}/PP-OCRv5_server_rec_infer.onnx and {dir}/alphabet.txt.
+    model_dir: Option<String>,
+
+    /// Write a searchable PDF (with invisible text overlay) to this path.
+    output_pdf: Option<String>,
+
+    /// Minimum confidence [0.0, 1.0] for words included in the PDF text layer.
+    /// Words below this threshold are omitted from the invisible text overlay.
+    min_confidence: Option<f32>,
 }
 
 fn parse_args() -> Result<Args, lexopt::Error> {
@@ -139,8 +152,11 @@ fn parse_args() -> Result<Args, lexopt::Error> {
     let mut clipboard = false;
     let mut debug = false;
     let mut detection_model = None;
+    let mut min_confidence = None;
+    let mut model_dir = None;
     let mut output_format = OutputFormat::Text;
     let mut output_path = None;
+    let mut output_pdf = None;
     let mut recognition_model = None;
     let mut text_line_images = false;
     let mut text_map = false;
@@ -170,6 +186,26 @@ fn parse_args() -> Result<Args, lexopt::Error> {
             }
             Long("detect-model") => {
                 detection_model = Some(parser.value()?.string()?);
+            }
+            Long("min-confidence") => {
+                let v: f32 = parser
+                    .value()?
+                    .string()?
+                    .parse()
+                    .map_err(|_| "invalid --min-confidence value (expected 0.0–1.0)")?;
+                min_confidence = Some(v.clamp(0.0, 1.0));
+            }
+            Long("model-dir") => {
+                model_dir = Some(parser.value()?.string()?);
+            }
+            Long("output-pdf") => {
+                output_pdf = Some(parser.value()?.string()?);
+            }
+            Long("alto") => {
+                output_format = OutputFormat::Alto;
+            }
+            Long("hocr") => {
+                output_format = OutputFormat::Hocr;
             }
             Short('j') | Long("json") => {
                 output_format = OutputFormat::Json;
@@ -279,6 +315,23 @@ Advanced options:
         }
     }
 
+    // --model-dir sets default paths for rec-model and alphabet-file.
+    if let Some(ref dir) = model_dir {
+        if recognition_model.is_none() {
+            recognition_model = Some(format!("{dir}/PP-OCRv5_server_rec_infer.onnx"));
+        }
+        if alphabet_file.is_none() {
+            alphabet_file = Some(format!("{dir}/alphabet.txt"));
+        }
+        // Detection model is optional: only set if the file exists.
+        if detection_model.is_none() {
+            let det = format!("{dir}/PP-OCRv5_server_det_infer.onnx");
+            if std::path::Path::new(&det).exists() {
+                detection_model = Some(det);
+            }
+        }
+    }
+
     let image = values.pop_front();
 
     let stdin_is_pipe = !std::io::stdin().is_terminal();
@@ -305,8 +358,11 @@ Advanced options:
         debug,
         detection_model,
         input,
+        min_confidence,
+        model_dir,
         output_format,
         output_path,
+        output_pdf,
         recognition_model,
         text_map,
         text_mask,
@@ -434,6 +490,73 @@ fn main() -> Result<(), Box<dyn Error>> {
         ..Default::default()
     })?;
 
+    // PDF input: extract page images, OCR each, write text + optional searchable PDF.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let InputSource::File(ref file_path) = args.input {
+        if file_path.to_lowercase().ends_with(".pdf") {
+            let pdf_path = file_path.clone();
+            let page_images = pdf::extract_page_images(&pdf_path)?;
+            let mut all_lines: Vec<Option<ocrs::TextLine>> = Vec::new();
+            let mut page_results: Vec<pdf::PageOcrResult> = Vec::new();
+
+            for page in page_images {
+                let [img_h, img_w, _] = page.tensor.shape();
+                let img_src = ImageSource::from_tensor(page.tensor.view(), DimOrder::Hwc)?;
+                let ocr_input = engine.prepare_input(img_src)?;
+                let word_rects = engine.detect_words(&ocr_input)?;
+                let line_rects = engine.find_text_lines(&ocr_input, &word_rects);
+                let text_lines = engine.recognize_text(&ocr_input, &line_rects)?;
+                page_results.push(pdf::PageOcrResult {
+                    text_lines: text_lines.clone(),
+                    image_hw: [img_h, img_w],
+                    page_wh_pts: [page.width_pts, page.height_pts],
+                });
+                all_lines.extend(text_lines);
+            }
+
+            let write_str = |content: String| -> Result<(), Box<dyn Error>> {
+                if let Some(ref p) = args.output_path {
+                    std::fs::write(p, content.into_bytes())
+                        .with_context(|| format!("Failed to write output to {p}"))?;
+                } else {
+                    println!("{}", content);
+                }
+                Ok(())
+            };
+
+            match args.output_format {
+                OutputFormat::Text => write_str(format_text_output(&all_lines))?,
+                OutputFormat::Json => write_str(format_json_output(FormatJsonArgs {
+                    input_path: &pdf_path,
+                    input_hw: [0, 0], // multi-page: no single hw
+                    text_lines: &all_lines,
+                }))?,
+                OutputFormat::Hocr => write_str(format_hocr_output(FormatJsonArgs {
+                    input_path: &pdf_path,
+                    input_hw: [0, 0],
+                    text_lines: &all_lines,
+                }))?,
+                OutputFormat::Alto => write_str(format_alto_output(FormatJsonArgs {
+                    input_path: &pdf_path,
+                    input_hw: [0, 0],
+                    text_lines: &all_lines,
+                }))?,
+                OutputFormat::Png => {
+                    return Err("--png is not supported for PDF input".into());
+                }
+            }
+
+            if let Some(ref pdf_out) = args.output_pdf {
+                pdf::build_searchable_pdf(&pdf_path, &page_results, pdf_out, args.min_confidence)?;
+                if args.debug {
+                    println!("Searchable PDF written to {pdf_out}");
+                }
+            }
+
+            return Ok(());
+        }
+    }
+
     // Read image into HWC tensor.
     let (color_img, input_path): (NdTensor<u8, 3>, String) = match &args.input {
         InputSource::Clipboard => (load_image_from_clipboard()?, "<clipboard>".to_string()),
@@ -505,6 +628,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             };
             write_image(&output_path, annotated_img.view())
                 .with_context(|| format!("Failed to write output to {}", &output_path))?;
+        }
+        OutputFormat::Hocr => {
+            let content = format_hocr_output(FormatJsonArgs {
+                input_path: &input_path,
+                input_hw: color_img.shape()[1..].try_into()?,
+                text_lines: &line_texts,
+            });
+            write_output_str(content)?;
+        }
+        OutputFormat::Alto => {
+            let content = format_alto_output(FormatJsonArgs {
+                input_path: &input_path,
+                input_hw: color_img.shape()[1..].try_into()?,
+                text_lines: &line_texts,
+            });
+            write_output_str(content)?;
         }
     }
 
