@@ -66,6 +66,14 @@ Reproduce with:
 ./tools/test-e2e-cjk.sh models/
 ```
 
+**Japanese input:**
+![Japanese test image](ocrs-cli/test-data/cjk/test_ja.png)
+OCR output: `東京オリンピック2024`
+
+**Simplified Chinese input:**
+![Simplified Chinese test image](ocrs-cli/test-data/cjk/test_zh.png)
+OCR output: `人工智能技2024`
+
 ## Comparison with Other OCR Solutions
 
 | Solution | Runtime | CJK (JA/ZH/KO) | Native WASM | No C/C++ | Offline | hOCR/ALTO | License |

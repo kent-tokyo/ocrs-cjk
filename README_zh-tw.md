@@ -43,6 +43,23 @@ ocrs 目前處於早期預覽階段，辨識錯誤率高於商業 OCR 引擎。
 
 上游 ocrs 僅支援拉丁字母。原始語言支援路線圖請參閱 [upstream issue](https://github.com/robertknight/ocrs/issues/8)。
 
+## 已驗證的 CJK 辨識
+
+以下結果由 PP-OCRv5 辨識模型 + 內建偵測模型處理 `ocrs-cli/test-data/cjk/` 中的測試圖像得出：
+
+| 語言 | 測試圖像 | OCR 輸出 | 狀態 |
+|------|---------|---------|------|
+| 日文 | `test_ja.png`（600×80，合成） | `東京オリンピック2024` | PASS |
+| 中文 | `test_zh.png`（600×80，合成） | `人工智能技2024` | PASS |
+
+**日文輸入：**
+![日文測試圖像](ocrs-cli/test-data/cjk/test_ja.png)
+OCR 輸出：`東京オリンピック2024`
+
+**簡體中文輸入：**
+![中文測試圖像](ocrs-cli/test-data/cjk/test_zh.png)
+OCR 輸出：`人工智能技2024`
+
 ## 與其他 OCR 解決方案的比較
 
 | 解決方案 | 執行時 | CJK (JA/ZH/KO) | 原生 WASM | 無 C/C++ | 離線 | hOCR/ALTO | 授權 |

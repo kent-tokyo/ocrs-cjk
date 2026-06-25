@@ -57,6 +57,14 @@ ocrs は現在アーリープレビュー段階です。商用OCRエンジンよ
 ./tools/test-e2e-cjk.sh models/
 ```
 
+**日本語入力:**
+![日本語テスト画像](ocrs-cli/test-data/cjk/test_ja.png)
+OCR出力: `東京オリンピック2024`
+
+**簡体字中国語入力:**
+![中国語テスト画像](ocrs-cli/test-data/cjk/test_zh.png)
+OCR出力: `人工智能技2024`
+
 ## 他のOCRソリューションとの比較
 
 | ソリューション | ランタイム | CJK (JA/ZH/KO) | ネイティブWASM | C/C++不要 | オフライン | hOCR/ALTO | ライセンス |
