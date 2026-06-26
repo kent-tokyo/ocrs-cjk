@@ -4,7 +4,9 @@ use std::fs;
 use std::io::{BufWriter, IsTerminal, Read};
 
 use anyhow::{anyhow, Context};
-use ocrs_cjk::{DecodeMethod, DimOrder, ImageSource, OcrEngine, OcrEngineParams, OcrInput, TextItem};
+use ocrs_cjk::{
+    DecodeMethod, DimOrder, ImageSource, OcrEngine, OcrEngineParams, OcrInput, TextItem,
+};
 use rten_imageproc::RotatedRect;
 use rten_tensor::prelude::*;
 use rten_tensor::{NdTensor, NdTensorView};
@@ -12,13 +14,13 @@ use rten_tensor::{NdTensor, NdTensorView};
 mod deskew;
 mod doctor;
 mod furigana;
-mod post_correct;
 mod models;
+mod post_correct;
 use models::{load_model, ModelSource};
 mod output;
-mod table;
 #[cfg(not(target_arch = "wasm32"))]
 mod pdf;
+mod table;
 use output::{
     format_alto_output, format_alto_pdf_output, format_blocks_json_output,
     format_furigana_json_output, format_hocr_output, format_hocr_pdf_output, format_json_output,
@@ -874,16 +876,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 OutputFormat::Text => {
                     write_str(format_text_output(&all_lines, args.low_confidence_mark))?
                 }
-                OutputFormat::Json => {
-                    write_str(format_json_pdf_output(&pdf_path, &page_infos))?
-                }
-                OutputFormat::Hocr => {
-                    write_str(format_hocr_pdf_output(&pdf_path, &page_infos))?
-                }
+                OutputFormat::Json => write_str(format_json_pdf_output(&pdf_path, &page_infos))?,
+                OutputFormat::Hocr => write_str(format_hocr_pdf_output(&pdf_path, &page_infos))?,
                 OutputFormat::Alto => write_str(format_alto_pdf_output(&page_infos))?,
-                OutputFormat::Markdown => {
-                    write_str(format_markdown_pdf_output(&page_infos))?
-                }
+                OutputFormat::Markdown => write_str(format_markdown_pdf_output(&page_infos))?,
                 OutputFormat::Tsv => write_str(format_tsv_pdf_output(&page_infos))?,
                 OutputFormat::Png => {
                     return Err("--png is not supported for PDF input".into());
@@ -1019,7 +1015,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 input_hw: color_img.shape()[1..].try_into()?,
                 text_lines: &line_texts,
                 low_confidence_threshold: args.low_confidence_mark,
-                tables: if args.tables { Some(&detected_tables) } else { None },
+                tables: if args.tables {
+                    Some(&detected_tables)
+                } else {
+                    None
+                },
             });
             write_output_str(content)?;
         }

@@ -42,8 +42,12 @@ pub fn page_has_text_layer(doc: &Document, page_id: ObjectId) -> bool {
     let font_obj = match resources_obj {
         Object::Dictionary(d) => d.get(b"Font").ok(),
         Object::Reference(id) => {
-            let Some(obj) = doc.get_object(*id).ok() else { return false };
-            let Some(d) = obj.as_dict().ok() else { return false };
+            let Some(obj) = doc.get_object(*id).ok() else {
+                return false;
+            };
+            let Some(d) = obj.as_dict().ok() else {
+                return false;
+            };
             d.get(b"Font").ok()
         }
         _ => return false,
@@ -76,8 +80,7 @@ pub struct PageOcrResult {
 /// Only `DCTDecode` (JPEG) and `FlateDecode` (raw pixels, DeviceRGB/DeviceGray)
 /// are supported. Pages with unsupported image filters are skipped with a warning.
 pub fn extract_page_images(path: &str) -> anyhow::Result<Vec<PageImage>> {
-    let doc = Document::load(path)
-        .with_context(|| format!("failed to open PDF: {path}"))?;
+    let doc = Document::load(path).with_context(|| format!("failed to open PDF: {path}"))?;
 
     let mut page_images = Vec::new();
 
@@ -110,10 +113,12 @@ pub fn extract_page_images(path: &str) -> anyhow::Result<Vec<PageImage>> {
         //           position parsing if PDFs with equal-size multi-image pages appear.
         let img = images
             .iter()
-            .max_by_key(|i| (
-                (i.width.max(0) as usize) * (i.height.max(0) as usize),
-                i.content.len(),
-            ))
+            .max_by_key(|i| {
+                (
+                    (i.width.max(0) as usize) * (i.height.max(0) as usize),
+                    i.content.len(),
+                )
+            })
             .unwrap(); // safe: images is non-empty (checked above)
         if images.len() > 1 {
             eprintln!(
@@ -152,13 +157,19 @@ pub fn extract_page_images(path: &str) -> anyhow::Result<Vec<PageImage>> {
                 // lopdf's PDFImage may return 0 for width/height on some PDFs;
                 // fall back to reading /Width and /Height from the stream dict directly.
                 if w == 0 {
-                    w = stream.dict.get(b"Width").ok()
+                    w = stream
+                        .dict
+                        .get(b"Width")
+                        .ok()
                         .and_then(|o| o.as_i64().ok())
                         .map(|v| v.max(0) as usize)
                         .unwrap_or(0);
                 }
                 if h == 0 {
-                    h = stream.dict.get(b"Height").ok()
+                    h = stream
+                        .dict
+                        .get(b"Height")
+                        .ok()
                         .and_then(|o| o.as_i64().ok())
                         .map(|v| v.max(0) as usize)
                         .unwrap_or(0);
@@ -198,7 +209,12 @@ pub fn extract_page_images(path: &str) -> anyhow::Result<Vec<PageImage>> {
             }
         };
 
-        page_images.push(PageImage { tensor, width_pts, height_pts, has_text_layer });
+        page_images.push(PageImage {
+            tensor,
+            width_pts,
+            height_pts,
+            has_text_layer,
+        });
     }
 
     Ok(page_images)
@@ -263,7 +279,11 @@ pub fn build_searchable_pdf(
         let [page_w_pts, page_h_pts] = page_result.page_wh_pts;
 
         // Add font to this page's resource dictionary.
-        add_font_to_page(doc.get_object_mut(page_id).and_then(Object::as_dict_mut)?, b"F0", font_id)?;
+        add_font_to_page(
+            doc.get_object_mut(page_id).and_then(Object::as_dict_mut)?,
+            b"F0",
+            font_id,
+        )?;
 
         // Build the invisible text content stream.
         let content_bytes = build_text_stream(
@@ -326,8 +346,16 @@ fn build_text_stream(
     char_to_glyph: &HashMap<char, u16>,
     min_confidence: Option<f32>,
 ) -> anyhow::Result<Vec<u8>> {
-    let scale_x = if img_w > 0 { page_w_pts / img_w as f32 } else { 1.0 };
-    let scale_y = if img_h > 0 { page_h_pts / img_h as f32 } else { 1.0 };
+    let scale_x = if img_w > 0 {
+        page_w_pts / img_w as f32
+    } else {
+        1.0
+    };
+    let scale_y = if img_h > 0 {
+        page_h_pts / img_h as f32
+    } else {
+        1.0
+    };
 
     let mut ops: Vec<Operation> = vec![
         Operation::new("BT", vec![]),
@@ -335,7 +363,10 @@ fn build_text_stream(
         Operation::new("Tr", vec![Object::Integer(3)]),
         // Use font F0 at 10pt. Size matters for selection rectangles but not
         // for visibility, since text is invisible.
-        Operation::new("Tf", vec![Object::Name(b"F0".to_vec()), Object::Integer(10)]),
+        Operation::new(
+            "Tf",
+            vec![Object::Name(b"F0".to_vec()), Object::Integer(10)],
+        ),
     ];
 
     for line in page.text_lines.iter().flatten() {
@@ -345,7 +376,10 @@ fn build_text_stream(
                 continue;
             }
             // Skip words below the confidence threshold.
-            if min_confidence.map(|t| word.confidence() < t).unwrap_or(false) {
+            if min_confidence
+                .map(|t| word.confidence() < t)
+                .unwrap_or(false)
+            {
                 continue;
             }
 
@@ -399,10 +433,7 @@ fn build_type0_font(
 ) -> anyhow::Result<ObjectId> {
     // 1. ToUnicode CMap stream (no Filter — doc.compress() will add FlateDecode).
     let cmap_text = build_tounicode_cmap(all_chars, char_to_glyph);
-    let tounicode_id = doc.add_object(Stream::new(
-        dictionary! {},
-        cmap_text.into_bytes(),
-    ));
+    let tounicode_id = doc.add_object(Stream::new(dictionary! {}, cmap_text.into_bytes()));
 
     // 2. CIDFont (descendant).
     let cid_font_dict = dictionary! {

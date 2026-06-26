@@ -149,7 +149,7 @@ mod tests {
         // '0' with high confidence in letter context must not be corrected.
         let line = make_line(vec![
             make_char('H', 0.99),
-            make_char('0', 0.95),  // high confidence → keep
+            make_char('0', 0.95), // high confidence → keep
             make_char('l', 0.99),
         ]);
         let result = apply_ja(&[Some(line)], 0.7);
@@ -160,10 +160,7 @@ mod tests {
     #[test]
     fn test_kuriwaku_to_hi() {
         // '曰' at any confidence → '日'
-        let line = make_line(vec![
-            make_char('曰', 0.60),
-            make_char('本', 0.99),
-        ]);
+        let line = make_line(vec![make_char('曰', 0.60), make_char('本', 0.99)]);
         let result = apply_ja(&[Some(line)], 0.7);
         let corrected = result[0].as_ref().unwrap().to_string();
         assert_eq!(corrected, "日本");
@@ -192,10 +189,7 @@ mod tests {
     #[test]
     fn test_normalize_preserves_non_fullwidth() {
         // Regular ASCII and CJK should pass through unchanged
-        let line = make_line(vec![
-            make_char('A', 0.99),
-            make_char('日', 0.99),
-        ]);
+        let line = make_line(vec![make_char('A', 0.99), make_char('日', 0.99)]);
         let result = normalize_ja(&[Some(line)]);
         let normalized = result[0].as_ref().unwrap().to_string();
         assert_eq!(normalized, "A日");

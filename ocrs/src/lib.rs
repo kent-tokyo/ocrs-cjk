@@ -233,8 +233,7 @@ impl OcrEngine {
             for y in 0..height {
                 for x in 0..width {
                     // Undo ImageNet normalisation to recover the [0, 1] pixel value.
-                    let unit =
-                        |c: usize| (color_img[[c, y, x]] * STD[c] + MEAN[c]).clamp(0.0, 1.0);
+                    let unit = |c: usize| (color_img[[c, y, x]] * STD[c] + MEAN[c]).clamp(0.0, 1.0);
                     let g = W[0] * unit(0) + W[1] * unit(1) + W[2] * unit(2);
                     grey[[0, y, x]] = PREPROCESS_BLACK_VALUE + g;
                 }
@@ -259,7 +258,11 @@ impl OcrEngine {
     pub fn detect_words(&self, input: &OcrInput) -> anyhow::Result<Vec<RotatedRect>> {
         if let Some(detector) = self.detector.as_ref() {
             let detect_view = if detector.needs_color_image() {
-                input.color_image.as_ref().map(|c| c.view()).unwrap_or(input.image.view())
+                input
+                    .color_image
+                    .as_ref()
+                    .map(|c| c.view())
+                    .unwrap_or(input.image.view())
             } else {
                 input.image.view()
             };
@@ -278,7 +281,11 @@ impl OcrEngine {
     pub fn detect_text_pixels(&self, input: &OcrInput) -> anyhow::Result<NdTensor<f32, 2>> {
         if let Some(detector) = self.detector.as_ref() {
             let detect_view = if detector.needs_color_image() {
-                input.color_image.as_ref().map(|c| c.view()).unwrap_or(input.image.view())
+                input
+                    .color_image
+                    .as_ref()
+                    .map(|c| c.view())
+                    .unwrap_or(input.image.view())
             } else {
                 input.image.view()
             };

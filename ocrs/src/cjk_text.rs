@@ -131,7 +131,10 @@ pub fn cjk_alphabet() -> String {
     // Pre-allocating avoids 3-4 intermediate reallocations during collect().
     const TOTAL: usize = (0x309F - 0x3040 + 1) + (0x30FF - 0x30A0 + 1) + (0x9FFF - 0x4E00 + 1);
     let mut s = String::with_capacity(TOTAL * 3);
-    hiragana().chain(katakana()).chain(cjk_unified()).for_each(|c| s.push(c));
+    hiragana()
+        .chain(katakana())
+        .chain(cjk_unified())
+        .for_each(|c| s.push(c));
     s
 }
 
@@ -143,7 +146,10 @@ pub fn cjk_alphabet() -> String {
 pub fn cjk_alphabet_chars() -> Vec<char> {
     const TOTAL: usize = (0x309F - 0x3040 + 1) + (0x30FF - 0x30A0 + 1) + (0x9FFF - 0x4E00 + 1);
     let mut v = Vec::with_capacity(TOTAL);
-    hiragana().chain(katakana()).chain(cjk_unified()).for_each(|c| v.push(c));
+    hiragana()
+        .chain(katakana())
+        .chain(cjk_unified())
+        .for_each(|c| v.push(c));
     v
 }
 
@@ -371,7 +377,7 @@ mod tests {
         assert_eq!(chars.len(), 0xD7A3 - 0xAC00 + 1); // 11172; U+D7A4..U+D7AF are unassigned
         assert!(chars.contains(&'가'));
         assert!(chars.contains(&'힣')); // U+D7A3, last valid Hangul syllable
-        // Unassigned codepoints must NOT be included
+                                        // Unassigned codepoints must NOT be included
         assert!(!chars.contains(&'\u{D7A4}'));
         assert!(!chars.contains(&'\u{D7AF}'));
     }

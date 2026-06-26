@@ -106,11 +106,7 @@ pub fn group_into_blocks(lines: &[Option<TextLine>]) -> Vec<Vec<&TextLine>> {
 fn find_column_separators(group: &[&TextLine], min_gap_width: i32) -> Vec<i32> {
     let mut intervals: Vec<(i32, i32)> = group
         .iter()
-        .flat_map(|line| {
-            line.chars()
-                .iter()
-                .map(|c| (c.rect.left(), c.rect.right()))
-        })
+        .flat_map(|line| line.chars().iter().map(|c| (c.rect.left(), c.rect.right())))
         .filter(|(l, r)| l < r)
         .collect();
 
@@ -200,9 +196,21 @@ fn median_line_height(group: &[&TextLine]) -> i32 {
 
 fn group_bbox(group: &[&TextLine]) -> Rect {
     let top = group.iter().map(|l| l.bounding_rect().top()).min().unwrap();
-    let left = group.iter().map(|l| l.bounding_rect().left()).min().unwrap();
-    let bottom = group.iter().map(|l| l.bounding_rect().bottom()).max().unwrap();
-    let right = group.iter().map(|l| l.bounding_rect().right()).max().unwrap();
+    let left = group
+        .iter()
+        .map(|l| l.bounding_rect().left())
+        .min()
+        .unwrap();
+    let bottom = group
+        .iter()
+        .map(|l| l.bounding_rect().bottom())
+        .max()
+        .unwrap();
+    let right = group
+        .iter()
+        .map(|l| l.bounding_rect().right())
+        .max()
+        .unwrap();
     Rect::from_tlhw(top, left, bottom - top, right - left)
 }
 
@@ -294,11 +302,18 @@ mod tests {
         let chars: Vec<_> = cells
             .iter()
             .flat_map(|(text, x_start)| {
-                text.chars().enumerate().map(move |(i, ch)| ocrs_cjk::TextChar {
-                    char: ch,
-                    rect: Rect::from_tlhw(top, x_start + i as i32 * char_width, height, char_width),
-                    confidence: 1.0,
-                })
+                text.chars()
+                    .enumerate()
+                    .map(move |(i, ch)| ocrs_cjk::TextChar {
+                        char: ch,
+                        rect: Rect::from_tlhw(
+                            top,
+                            x_start + i as i32 * char_width,
+                            height,
+                            char_width,
+                        ),
+                        confidence: 1.0,
+                    })
             })
             .collect();
         TextLine::new(chars)

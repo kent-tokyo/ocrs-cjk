@@ -10,7 +10,7 @@ import time
 
 
 def build_ocrs() -> None:
-    run("cargo build --release -p ocrs-cli", shell=True, check=True, text=True)
+    run("cargo build --release -p ocrs-cjk-cli", shell=True, check=True, text=True)
 
 
 def extract_text(image_path: str) -> str:

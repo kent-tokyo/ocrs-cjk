@@ -29,10 +29,7 @@ pub fn deskew(img: NdTensorView<u8, 3>) -> (NdTensor<u8, 3>, f32) {
 }
 
 /// Downsample and convert to grayscale (nearest-neighbour sampling).
-fn grayscale_downsample(
-    img: NdTensorView<u8, 3>,
-    max_dim: usize,
-) -> (Vec<u8>, usize, usize) {
+fn grayscale_downsample(img: NdTensorView<u8, 3>, max_dim: usize) -> (Vec<u8>, usize, usize) {
     let [h, w, channels] = img.shape();
 
     let scale = (max_dim as f32 / h.max(w) as f32).min(1.0);
@@ -176,7 +173,11 @@ pub fn auto_rotate(img: NdTensorView<u8, 3>) -> (NdTensor<u8, 3>, u32) {
     // Derivation: var0 ≥ var90 → image is 0°/180°; use top density to pick.
     //             var0 < var90 → image is 90°/270°; use top density of rotated gray to pick.
     let corrections: u32 = if var0 >= var90 {
-        if text_denser_in_top(&gray, gh, gw) { 0 } else { 2 }
+        if text_denser_in_top(&gray, gh, gw) {
+            0
+        } else {
+            2
+        }
     } else if text_denser_in_top(&gray90, g90h, g90w) {
         3
     } else {
@@ -185,7 +186,10 @@ pub fn auto_rotate(img: NdTensorView<u8, 3>) -> (NdTensor<u8, 3>, u32) {
 
     if corrections == 0 {
         let [h, w, c] = img.shape();
-        return (NdTensor::from_data([h, w, c], img.iter().copied().collect::<Vec<u8>>()), 0);
+        return (
+            NdTensor::from_data([h, w, c], img.iter().copied().collect::<Vec<u8>>()),
+            0,
+        );
     }
 
     let mut result = rotate90_cw(img);
@@ -316,7 +320,10 @@ mod tests {
         let img = make_striped_image(200, 100); // portrait with horizontal stripes
         let sideways = rotate90_cw(img.view()); // now landscape, stripes are vertical
         let (corrected, degrees) = auto_rotate(sideways.view());
-        assert!(degrees > 0, "sideways image should need rotation correction");
+        assert!(
+            degrees > 0,
+            "sideways image should need rotation correction"
+        );
         // After correction the image should be portrait again (H=200, W=100 or H=100, W=200 depending on direction)
         let [ch, cw, cc] = corrected.shape();
         assert_eq!(cc, 3);

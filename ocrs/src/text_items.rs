@@ -29,7 +29,12 @@ pub trait TextItem {
     fn rotated_rect(&self) -> RotatedRect {
         let chars = self.chars();
         let mut points = Vec::with_capacity(chars.len() * 4);
-        points.extend(chars.iter().flat_map(|c| c.rect.corners()).map(Point::to_f32));
+        points.extend(
+            chars
+                .iter()
+                .flat_map(|c| c.rect.corners())
+                .map(Point::to_f32),
+        );
         let rect = min_area_rect(&points).expect("expected valid rect");
 
         // Give the rect a predictable orientation. We currently assume the

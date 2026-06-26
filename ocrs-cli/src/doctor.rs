@@ -16,13 +16,25 @@ struct Check {
 
 impl Check {
     fn ok(label: &'static str, detail: impl Into<String>) -> Self {
-        Self { label, status: Status::Ok, detail: detail.into() }
+        Self {
+            label,
+            status: Status::Ok,
+            detail: detail.into(),
+        }
     }
     fn info(label: &'static str, detail: impl Into<String>) -> Self {
-        Self { label, status: Status::Info, detail: detail.into() }
+        Self {
+            label,
+            status: Status::Info,
+            detail: detail.into(),
+        }
     }
     fn error(label: &'static str, detail: impl Into<String>) -> Self {
-        Self { label, status: Status::Error, detail: detail.into() }
+        Self {
+            label,
+            status: Status::Error,
+            detail: detail.into(),
+        }
     }
 }
 

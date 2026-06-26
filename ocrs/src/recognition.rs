@@ -4,9 +4,9 @@ use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 use rten::ctc::{CtcDecoder, CtcHypothesis};
-use rten::{Dimension, FloatOperators};
 #[cfg(not(target_arch = "wasm32"))]
 use rten::thread_pool;
+use rten::{Dimension, FloatOperators};
 use rten_imageproc::{
     bounding_rect, BoundingRect, Line, Point, PointF, Polygon, Rect, RotatedRect,
 };
@@ -142,8 +142,10 @@ fn prepare_text_line_batch(
     output_width: usize,
     input_channels: usize,
 ) -> NdTensor<f32, 4> {
-    let mut output =
-        NdTensor::full([lines.len(), input_channels, output_height, output_width], BLACK_VALUE);
+    let mut output = NdTensor::full(
+        [lines.len(), input_channels, output_height, output_width],
+        BLACK_VALUE,
+    );
 
     for (group_line_index, line) in lines.iter().enumerate() {
         let resized_line_img = prepare_text_line(
@@ -556,8 +558,7 @@ impl TextRecognizer {
                                     .steps()
                                     .iter()
                                     .map(|step| {
-                                        input_seq_slice
-                                            [[step.pos as usize, step.label as usize]]
+                                        input_seq_slice[[step.pos as usize, step.label as usize]]
                                             .exp()
                                             .clamp(0.0, 1.0)
                                     })

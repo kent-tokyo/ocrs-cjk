@@ -117,7 +117,7 @@ fn hocr_header() -> String {
        <meta name=\"ocr-capabilities\" content=\"ocr_page ocr_line ocrx_word\"/>\n\
      </head>\n\
      <body>\n"
-    .to_string()
+        .to_string()
 }
 
 /// Render one hOCR `<div class="ocr_page">` block for a single page.
@@ -380,9 +380,21 @@ pub fn format_blocks_json_output(args: FormatJsonArgs) -> String {
         .enumerate()
         .map(|(i, block)| {
             let top = block.iter().map(|l| l.bounding_rect().top()).min().unwrap();
-            let left = block.iter().map(|l| l.bounding_rect().left()).min().unwrap();
-            let bottom = block.iter().map(|l| l.bounding_rect().bottom()).max().unwrap();
-            let right = block.iter().map(|l| l.bounding_rect().right()).max().unwrap();
+            let left = block
+                .iter()
+                .map(|l| l.bounding_rect().left())
+                .min()
+                .unwrap();
+            let bottom = block
+                .iter()
+                .map(|l| l.bounding_rect().bottom())
+                .max()
+                .unwrap();
+            let right = block
+                .iter()
+                .map(|l| l.bounding_rect().right())
+                .max()
+                .unwrap();
             let text = block
                 .iter()
                 .map(|l| l.to_string())
@@ -491,7 +503,9 @@ fn line_to_review_json(line: &TextLine, threshold: f32) -> serde_json::Value {
 /// Pair with `--mark-low-confidence <threshold>` to set a custom threshold (default 0.7).
 pub fn format_review_json_output(args: FormatJsonArgs) -> String {
     let [height, width] = args.input_hw;
-    let threshold = args.low_confidence_threshold.unwrap_or(REVIEW_DEFAULT_THRESHOLD);
+    let threshold = args
+        .low_confidence_threshold
+        .unwrap_or(REVIEW_DEFAULT_THRESHOLD);
     let line_items: Vec<_> = args
         .text_lines
         .iter()
@@ -539,8 +553,7 @@ pub fn format_hocr_output(args: FormatJsonArgs) -> String {
 /// containing bounding boxes (`HPOS`, `VPOS`, `WIDTH`, `HEIGHT`) and
 /// word confidence (`WC`).
 pub fn format_alto_output(args: FormatJsonArgs) -> String {
-    let mut out =
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+    let mut out = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <alto xmlns=\"http://www.loc.gov/standards/alto/ns-v4#\">\n\
            <Layout>\n"
         .to_string();
@@ -602,8 +615,7 @@ pub fn format_hocr_pdf_output(input_path: &str, pages: &[PageInfo]) -> String {
 
 /// Format multi-page PDF OCR output as ALTO XML with one `<Page>` per page.
 pub fn format_alto_pdf_output(pages: &[PageInfo]) -> String {
-    let mut out =
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+    let mut out = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <alto xmlns=\"http://www.loc.gov/standards/alto/ns-v4#\">\n\
            <Layout>\n"
         .to_string();
@@ -718,9 +730,13 @@ pub fn generate_confidence_heatmap(args: GeneratePngArgs) -> NdTensor<f32, 3> {
             let conf = c.confidence;
             // ponytail: red→yellow→green lerp; swap green for blue if color-blind mode needed
             let color = [
-                if conf < 0.5 { 1.0f32 } else { 2.0 * (1.0 - conf) }, // R
-                if conf > 0.5 { 1.0f32 } else { 2.0 * conf },          // G
-                0.0f32,                                                  // B
+                if conf < 0.5 {
+                    1.0f32
+                } else {
+                    2.0 * (1.0 - conf)
+                }, // R
+                if conf > 0.5 { 1.0f32 } else { 2.0 * conf }, // G
+                0.0f32,                                       // B
             ];
             let y0 = (c.rect.top() as usize).min(height);
             let y1 = (c.rect.bottom() as usize).min(height);
@@ -862,9 +878,10 @@ mod tests {
     #[test]
     fn test_alto_cjk_no_panic() {
         // CJK characters must appear correctly in ALTO XML output.
-        let lines = &[
-            Some(TextLine::new(gen_text_chars("東京オリンピック2024", 20))),
-        ];
+        let lines = &[Some(TextLine::new(gen_text_chars(
+            "東京オリンピック2024",
+            20,
+        )))];
         let alto = format_alto_output(FormatJsonArgs {
             input_path: "test_cjk.png",
             input_hw: [80, 600],

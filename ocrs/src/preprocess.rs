@@ -158,7 +158,11 @@ pub(crate) fn prepare_image_imagenet(img: ImageSource) -> NdTensor<f32, 3> {
             let rgb: [f32; 3] = match &img.data {
                 ImagePixels::Floats(f) => {
                     let get = |c: usize| {
-                        if channels_first { f[[c, y, x]] } else { f[[y, x, c]] }
+                        if channels_first {
+                            f[[c, y, x]]
+                        } else {
+                            f[[y, x, c]]
+                        }
                     };
                     if n_chans == 1 {
                         let v = get(0);
@@ -169,7 +173,11 @@ pub(crate) fn prepare_image_imagenet(img: ImageSource) -> NdTensor<f32, 3> {
                 }
                 ImagePixels::Bytes(b) => {
                     let get = |c: usize| -> f32 {
-                        let byte = if channels_first { b[[c, y, x]] } else { b[[y, x, c]] };
+                        let byte = if channels_first {
+                            b[[c, y, x]]
+                        } else {
+                            b[[y, x, c]]
+                        };
                         byte as f32 / 255.0
                     };
                     if n_chans == 1 {
