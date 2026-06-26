@@ -24,6 +24,7 @@ url = "2.5.4"
 anyhow = "1.0.102"
 
 [features]
+default = ["onnx"]
 # Support loading custom models in ONNX format
 onnx = ["ocrs-cjk/onnx"]
 # Support reading images from system clipboard

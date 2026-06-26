@@ -5,6 +5,7 @@ use rten::{op_registry, Model, ModelOptions, OpRegistry};
 use rten_imageproc::{min_area_rect, BoundingRect, PointF};
 use rten_tensor::prelude::*;
 
+use crate::cjk_text;
 use crate::{ImageSource, OcrEngine as BaseOcrEngine, OcrEngineParams, OcrInput, TextItem};
 
 /// Options for constructing an [OcrEngine].
@@ -370,4 +371,33 @@ fn collect_text_words<'a>(iter: impl Iterator<Item = super::TextWord<'a>>) -> Ve
         },
     })
     .collect()
+}
+
+/// Returns `true` if the Unicode codepoint belongs to a CJK block.
+///
+/// JS usage: `isCjk('あ'.codePointAt(0))  // true`
+#[wasm_bindgen(js_name = isCjk)]
+pub fn is_cjk(codepoint: u32) -> bool {
+    char::from_u32(codepoint).map_or(false, cjk_text::is_cjk)
+}
+
+/// Splits a string into script-homogeneous segments (CJK ↔ non-CJK).
+///
+/// Whitespace is a split point but is not returned. Returns a JS `string[]`.
+///
+/// JS usage: `segmentText("Hello 世界!")  // ["Hello", "世界", "!"]`
+#[wasm_bindgen(js_name = segmentText)]
+pub fn segment_text(s: &str) -> Box<[JsValue]> {
+    cjk_text::segment(s)
+        .map(|seg| JsValue::from_str(seg))
+        .collect::<Vec<_>>()
+        .into_boxed_slice()
+}
+
+/// Returns a string containing Hiragana + Katakana + CJK Unified Ideographs (~16K chars).
+///
+/// Use as the `alphabet` for CJK recognition when building a custom `OcrEngine`.
+#[wasm_bindgen(js_name = cjkAlphabet)]
+pub fn cjk_alphabet() -> String {
+    cjk_text::cjk_alphabet()
 }

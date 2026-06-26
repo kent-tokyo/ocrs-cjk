@@ -129,8 +129,7 @@ struct Args {
     /// Useful for large CJK alphabets where passing characters via --alphabet is impractical.
     alphabet_file: Option<String>,
 
-    /// Convenience flag: sets rec-model and alphabet-file from a directory.
-    /// Expects {dir}/PP-OCRv5_server_rec_infer.onnx and {dir}/alphabet.txt.
+    #[allow(dead_code)]
     model_dir: Option<String>,
 
     /// Write a searchable PDF (with invisible text overlay) to this path.
@@ -161,6 +160,7 @@ fn parse_args() -> Result<Args, lexopt::Error> {
     let mut text_line_images = false;
     let mut text_map = false;
     let mut text_mask = false;
+    let mut lang = false;
 
     let mut parser = lexopt::Parser::from_env();
     while let Some(arg) = parser.next()? {
@@ -194,6 +194,10 @@ fn parse_args() -> Result<Args, lexopt::Error> {
                     .parse()
                     .map_err(|_| "invalid --min-confidence value (expected 0.0–1.0)")?;
                 min_confidence = Some(v.clamp(0.0, 1.0));
+            }
+            Long("lang") => {
+                let _v = parser.value()?.string()?; // ja/zh/ko/zh-tw accepted; all use same PP-OCRv5 model
+                lang = true;
             }
             Long("model-dir") => {
                 model_dir = Some(parser.value()?.string()?);
@@ -258,6 +262,12 @@ Options:
   --detect-model <path>
 
     Use a custom text detection model
+
+  --lang <ja|zh|ko|zh-tw>
+
+    Use CJK-trained PP-OCRv5 models. Downloads detection and recognition
+    models on first use (~85 MB each, cached in ~/.cache/ocrs/).
+    Explicit --detect-model, --rec-model, or --alphabet flags take precedence.
 
   -j, --json
 
@@ -332,6 +342,19 @@ Advanced options:
         }
     }
 
+    // --lang sets CJK PP-OCRv5 model URLs; explicit flags override it.
+    if lang {
+        if detection_model.is_none() {
+            detection_model = Some(CJK_DETECTION_MODEL.to_string());
+        }
+        if recognition_model.is_none() {
+            recognition_model = Some(CJK_RECOGNITION_MODEL.to_string());
+        }
+        if alphabet.is_none() && alphabet_file.is_none() {
+            alphabet = Some(CJK_ALPHABET.to_string());
+        }
+    }
+
     let image = values.pop_front();
 
     let stdin_is_pipe = !std::io::stdin().is_terminal();
@@ -377,6 +400,15 @@ const DETECTION_MODEL: &str = "https://ocrs-models.s3-accelerate.amazonaws.com/t
 /// Default text recognition model.
 const RECOGNITION_MODEL: &str =
     "https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten";
+
+/// CJK (PP-OCRv5 server) detection model.
+const CJK_DETECTION_MODEL: &str = "https://huggingface.co/marsena/paddleocr-onnx-models/resolve/main/PP-OCRv5_server_det_infer.onnx";
+
+/// CJK (PP-OCRv5 server) recognition model.
+const CJK_RECOGNITION_MODEL: &str = "https://huggingface.co/marsena/paddleocr-onnx-models/resolve/main/PP-OCRv5_server_rec_infer.onnx";
+
+/// Embedded PP-OCRv5 alphabet (18,384 chars). Avoids a separate download for --lang users.
+const CJK_ALPHABET: &str = include_str!("../../models/alphabet.txt");
 
 /// Convert a decoded image into an HWC tensor.
 fn image_to_tensor(image: image::DynamicImage) -> NdTensor<u8, 3> {

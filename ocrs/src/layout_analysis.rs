@@ -17,8 +17,11 @@ fn rects_separated_by_line(a: &RotatedRect, b: &RotatedRect, l: LineF) -> bool {
 /// lines which cross them. They can be used to specify column boundaries
 /// for example.
 pub fn group_into_lines(rects: &[RotatedRect], separators: &[LineF]) -> Vec<Vec<RotatedRect>> {
-    let mut sorted_rects: Vec<_> = rects.to_vec();
-    sorted_rects.sort_by_key(|r| r.bounding_rect().left() as i32);
+    let mut slots: Vec<Option<RotatedRect>> = {
+        let mut v: Vec<_> = rects.to_vec();
+        v.sort_by_key(|r| r.bounding_rect().left() as i32);
+        v.into_iter().map(Some).collect()
+    };
 
     let mut lines: Vec<Vec<_>> = Vec::new();
 
@@ -34,9 +37,13 @@ pub fn group_into_lines(rects: &[RotatedRect], separators: &[LineF]) -> Vec<Vec<
     // produces for example.
     let max_h_overlap = 5;
 
-    while !sorted_rects.is_empty() {
-        let mut line = Vec::new();
-        line.push(sorted_rects.remove(0));
+    loop {
+        // Find the leftmost remaining rect to seed a new line.
+        let seed_idx = match slots.iter().position(|s| s.is_some()) {
+            Some(i) => i,
+            None => break,
+        };
+        let mut line = vec![slots[seed_idx].take().unwrap()];
 
         // Find the best candidate to extend the current line by one word to the
         // right, and keep going as long as we can find such a candidate.
@@ -44,9 +51,12 @@ pub fn group_into_lines(rects: &[RotatedRect], separators: &[LineF]) -> Vec<Vec<
             let last = line.last().unwrap();
             let last_edge = rightmost_edge(last);
 
-            if let Some((i, next_item)) = sorted_rects
+            // Extract just the index so the &RotatedRect borrow is released
+            // before slots[i].take().
+            let best_idx = slots
                 .iter()
                 .enumerate()
+                .filter_map(|(i, s)| s.as_ref().map(|r| (i, r)))
                 .filter(|(_, r)| {
                     let edge = leftmost_edge(r);
                     r.center().x > last.center().x
@@ -57,11 +67,11 @@ pub fn group_into_lines(rects: &[RotatedRect], separators: &[LineF]) -> Vec<Vec<
                             .any(|&s| rects_separated_by_line(last, r, s))
                 })
                 .min_by_key(|(_, r)| r.center().x as i32)
-            {
-                line.push(*next_item);
-                sorted_rects.remove(i);
-            } else {
-                break;
+                .map(|(i, _)| i);
+
+            match best_idx {
+                Some(i) => line.push(slots[i].take().unwrap()),
+                None => break,
             }
         }
         lines.push(line);
@@ -213,26 +223,34 @@ pub fn find_text_lines(words: &[RotatedRect]) -> Vec<Vec<RotatedRect>> {
     // line as the seed for a new paragraph, and then add to that para all
     // remaining un-assigned lines which are not separated from the seed.
     let mut paragraphs: Vec<TextParagraph> = Vec::new();
-    while !lines.is_empty() {
-        let seed = lines.remove(0);
-        let mut para = Vec::new();
-        para.push(seed.clone());
-
+    let mut line_slots: Vec<Option<TextLine>> = lines.into_iter().map(Some).collect();
+    let mut outer = 0;
+    while outer < line_slots.len() {
+        if line_slots[outer].is_none() {
+            outer += 1;
+            continue;
+        }
+        let seed = line_slots[outer].take().unwrap();
         let mut prev_line = midpoint_line(&seed);
+        let mut para = vec![seed];
 
-        let mut index = 0;
-        while index < lines.len() {
-            let candidate_line = midpoint_line(&lines[index]);
+        // lines are Y-sorted; scan only those after the seed (outer+1).
+        for inner in (outer + 1)..line_slots.len() {
+            if line_slots[inner].is_none() {
+                continue;
+            }
+            // midpoint_line returns a value type (LineF), releasing the borrow
+            // before the take() below.
+            let candidate_line = midpoint_line(line_slots[inner].as_ref().unwrap());
             if prev_line.horizontal_overlap(candidate_line) > 0.
                 && !is_separated_by(prev_line, candidate_line, &horizontal_separators)
             {
-                para.push(lines.remove(index));
+                para.push(line_slots[inner].take().unwrap());
                 prev_line = candidate_line;
-            } else {
-                index += 1;
             }
         }
         paragraphs.push(para);
+        outer += 1;
     }
 
     // Flatten paragraphs into a list of lines.
