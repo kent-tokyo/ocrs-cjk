@@ -24,6 +24,9 @@ pub enum OutputFormat {
 
     /// Output extracted text as Markdown (paragraphs separated by blank lines).
     Markdown,
+
+    /// Output per-word data as tab-separated values (text, bbox, confidence).
+    Tsv,
 }
 
 /// Return the coordinates of vertices of `rr` as an array of `[x, y]` points.
@@ -275,6 +278,68 @@ pub fn format_markdown_pdf_output(pages: &[PageInfo]) -> String {
         .map(|p| format_markdown_output(p.text_lines, p.low_confidence_threshold))
         .collect::<Vec<_>>()
         .join("\n\n---\n\n")
+}
+
+/// Format OCR outputs as TSV (tab-separated values), one word per row.
+///
+/// Columns: `text`, `left`, `top`, `right`, `bottom`, `confidence`
+///
+/// Tabs within recognized text are replaced with spaces.
+/// No header row — designed for shell pipe processing.
+pub fn format_tsv_output(text_lines: &[Option<TextLine>], threshold: Option<f32>) -> String {
+    let mut rows: Vec<String> = Vec::new();
+    for line in text_lines.iter().flatten() {
+        for word in line.words() {
+            let base = word.to_string().replace('\t', " ");
+            let text = match threshold {
+                Some(t) if word.confidence() < t => format!("{}[?]", base),
+                _ => base,
+            };
+            let wb = word.bounding_rect();
+            let conf = (word.confidence() * 100.0).round() / 100.0;
+            rows.push(format!(
+                "{}\t{}\t{}\t{}\t{}\t{:.2}",
+                text,
+                wb.left(),
+                wb.top(),
+                wb.right(),
+                wb.bottom(),
+                conf
+            ));
+        }
+    }
+    rows.join("\n")
+}
+
+/// Format multi-page PDF OCR output as TSV, one word per row.
+///
+/// Columns: `page`, `text`, `left`, `top`, `right`, `bottom`, `confidence`
+pub fn format_tsv_pdf_output(pages: &[PageInfo]) -> String {
+    let mut rows: Vec<String> = Vec::new();
+    for (page_idx, p) in pages.iter().enumerate() {
+        for line in p.text_lines.iter().flatten() {
+            for word in line.words() {
+                let base = word.to_string().replace('\t', " ");
+                let text = match p.low_confidence_threshold {
+                    Some(t) if word.confidence() < t => format!("{}[?]", base),
+                    _ => base,
+                };
+                let wb = word.bounding_rect();
+                let conf = (word.confidence() * 100.0).round() / 100.0;
+                rows.push(format!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{:.2}",
+                    page_idx + 1,
+                    text,
+                    wb.left(),
+                    wb.top(),
+                    wb.right(),
+                    wb.bottom(),
+                    conf
+                ));
+            }
+        }
+    }
+    rows.join("\n")
 }
 
 /// Format OCR outputs as JSON.

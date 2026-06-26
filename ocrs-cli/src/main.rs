@@ -20,8 +20,8 @@ mod pdf;
 use output::{
     format_alto_output, format_alto_pdf_output, format_hocr_output, format_hocr_pdf_output,
     format_json_output, format_json_pdf_output, format_markdown_output, format_markdown_pdf_output,
-    format_text_output, generate_annotated_png, FormatJsonArgs, GeneratePngArgs, OutputFormat,
-    PageInfo,
+    format_text_output, format_tsv_output, format_tsv_pdf_output, generate_annotated_png,
+    FormatJsonArgs, GeneratePngArgs, OutputFormat, PageInfo,
 };
 
 /// Write a CHW image to a PNG file in `path`.
@@ -276,6 +276,9 @@ fn parse_args() -> Result<Args, lexopt::Error> {
             Short('m') | Long("markdown") => {
                 output_format = OutputFormat::Markdown;
             }
+            Long("tsv") => {
+                output_format = OutputFormat::Tsv;
+            }
             Short('o') | Long("output") => {
                 output_path = Some(parser.value()?.string()?);
             }
@@ -375,6 +378,11 @@ Options:
   --rec-model <path>
 
     Use a custom text recognition model
+
+  --tsv
+
+    Output per-word data as TSV: text, left, top, right, bottom, confidence.
+    PDF input prepends a page column. No header. Pipe-friendly.
 
   --region <x,y,w,h>
 
@@ -716,6 +724,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 OutputFormat::Markdown => {
                     write_str(format_markdown_pdf_output(&page_infos))?
                 }
+                OutputFormat::Tsv => write_str(format_tsv_pdf_output(&page_infos))?,
                 OutputFormat::Png => {
                     return Err("--png is not supported for PDF input".into());
                 }
@@ -854,6 +863,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         OutputFormat::Markdown => {
             let content = format_markdown_output(&line_texts, args.low_confidence_mark);
+            write_output_str(content)?;
+        }
+        OutputFormat::Tsv => {
+            let content = format_tsv_output(&line_texts, args.low_confidence_mark);
             write_output_str(content)?;
         }
     }
