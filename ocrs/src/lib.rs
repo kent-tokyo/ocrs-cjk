@@ -63,6 +63,19 @@ pub struct OcrEngineParams {
     /// models](https://github.com/robertknight/ocrs-models).
     pub alphabet: Option<String>,
 
+    /// Alphabet as `Vec<char>`, bypassing the UTF-8 round-trip of [`alphabet`](Self::alphabet).
+    ///
+    /// Takes precedence over `alphabet` when both are set. Prefer this when you
+    /// already have a `Vec<char>`, for example from [`cjk_text::cjk_alphabet_chars()`]:
+    ///
+    /// ```ignore
+    /// OcrEngineParams {
+    ///     alphabet_chars: Some(cjk_text::cjk_alphabet_chars()),
+    ///     ..Default::default()
+    /// }
+    /// ```
+    pub alphabet_chars: Option<Vec<char>>,
+
     /// Set of characters that may be produced by text recognition.
     ///
     /// This is useful when you need the text recognition model to
@@ -83,6 +96,7 @@ struct OcrEngineParamsImpl<M: Model> {
     debug: bool,
     decode_method: DecodeMethod,
     alphabet: Option<String>,
+    alphabet_chars: Option<Vec<char>>,
     allowed_chars: Option<String>,
 }
 
@@ -94,6 +108,7 @@ impl From<OcrEngineParams> for OcrEngineParamsImpl<rten::Model> {
             debug,
             decode_method,
             alphabet,
+            alphabet_chars,
             allowed_chars,
         } = params;
 
@@ -103,6 +118,7 @@ impl From<OcrEngineParams> for OcrEngineParamsImpl<rten::Model> {
             debug,
             decode_method,
             alphabet,
+            alphabet_chars,
             allowed_chars,
         }
     }
@@ -154,9 +170,12 @@ impl OcrEngine {
             .map(TextRecognizer::from_model)
             .transpose()?;
 
-        let alphabet_chars: Vec<char> = match params.alphabet {
-            Some(s) => s.chars().collect(),
-            None => DEFAULT_ALPHABET.chars().collect(),
+        let alphabet_chars: Vec<char> = match params.alphabet_chars {
+            Some(chars) => chars,
+            None => match params.alphabet {
+                Some(s) => s.chars().collect(),
+                None => DEFAULT_ALPHABET.chars().collect(),
+            },
         };
 
         let excluded_char_labels = params.allowed_chars.map(|allowed_characters| {
