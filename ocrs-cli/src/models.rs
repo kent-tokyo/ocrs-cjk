@@ -14,7 +14,7 @@ use url::Url;
 /// Return the path to the directory in which cached models etc. should be
 /// saved.
 #[cfg(not(target_arch = "wasm32"))]
-fn cache_dir() -> Result<PathBuf, anyhow::Error> {
+pub(crate) fn cache_dir() -> Result<PathBuf, anyhow::Error> {
     let mut cache_dir: PathBuf =
         home::home_dir().ok_or(anyhow!("Failed to determine home directory"))?;
     cache_dir.push(".cache");

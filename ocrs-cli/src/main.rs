@@ -9,6 +9,7 @@ use rten_imageproc::RotatedRect;
 use rten_tensor::prelude::*;
 use rten_tensor::{NdTensor, NdTensorView};
 
+mod doctor;
 mod models;
 use models::{load_model, ModelSource};
 mod output;
@@ -408,7 +409,7 @@ const CJK_DETECTION_MODEL: &str = "https://huggingface.co/marsena/paddleocr-onnx
 const CJK_RECOGNITION_MODEL: &str = "https://huggingface.co/marsena/paddleocr-onnx-models/resolve/main/PP-OCRv5_server_rec_infer.onnx";
 
 /// Embedded PP-OCRv5 alphabet (18,384 chars). Avoids a separate download for --lang users.
-const CJK_ALPHABET: &str = include_str!("../../models/alphabet.txt");
+pub(crate) const CJK_ALPHABET: &str = include_str!("../../models/alphabet.txt");
 
 /// Convert a decoded image into an HWC tensor.
 fn image_to_tensor(image: image::DynamicImage) -> NdTensor<u8, 3> {
@@ -466,6 +467,11 @@ fn load_image_from_clipboard() -> anyhow::Result<NdTensor<u8, 3>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    if std::env::args().nth(1).as_deref() == Some("doctor") {
+        doctor::run_doctor();
+        return Ok(());
+    }
+
     let args = parse_args()?;
 
     // Fetch and load ML models.
