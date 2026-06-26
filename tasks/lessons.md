@@ -35,3 +35,17 @@
 ## WASM
 
 - **`rayon` panics at runtime on `wasm32-unknown-unknown`**. The code compiles (rayon has a wasm stub) but `into_par_iter` calls panic when executed. All parallelism in `recognize_text` must be guarded behind a `#[cfg(not(target_arch = "wasm32"))]` or replaced with sequential code for WASM targets.
+
+## GitHub Actions / CI
+
+- **`touch` is not available in PowerShell** (Windows GitHub Actions default shell). Any step using Unix commands (`touch`, `mkdir -p`) must add `shell: bash` to force Git Bash on Windows runners.
+
+- **`cargo audit` config goes in `.cargo/audit.toml`**, not `audit.toml` at the repo root. There is no `--config` flag; the tool reads from `.cargo/audit.toml` in the workspace directory automatically.
+
+- **`include_str!` requires the file to exist at compile time**, even for build-only CI jobs that don't use the file at runtime. Add a placeholder `touch models/alphabet.txt` step before `cargo build` in any job that doesn't download real models.
+
+- **Cargo workspace package name vs directory path**: `-p ocrs-cli` matches the package `name` in `Cargo.toml`, not the directory name. If the package is named `ocrs-cjk-cli` in `[package]`, use `-p ocrs-cjk-cli` even if the directory is `ocrs-cli/`.
+
+- **`git merge upstream/main` conflicts on reformatted files**: When upstream rewrites ci.yml structure and we have our own structure, resolve by keeping ours (`git checkout HEAD -- .github/workflows/ci.yml`) and regenerating `Cargo.lock` from scratch rather than resolving the lock file conflict line-by-line.
+
+- **`cargo fmt --check` fails if any file was edited without running `cargo fmt`**: Run `cargo fmt --all` before committing source changes, or add it to the pre-push hook.
