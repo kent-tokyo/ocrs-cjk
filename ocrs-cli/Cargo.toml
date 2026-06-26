@@ -34,7 +34,7 @@ clipboard = ["arboard"]
 ureq = "3.3.0"
 home = "0.5.12"
 arboard = { version = "3", optional = true }
-lopdf = "0.34"
+lopdf = "0.42"
 
 [[bin]]
 name = "ocrs"
