@@ -9,6 +9,7 @@ use rten_imageproc::RotatedRect;
 use rten_tensor::prelude::*;
 use rten_tensor::{NdTensor, NdTensorView};
 
+mod deskew;
 mod doctor;
 mod models;
 use models::{load_model, ModelSource};
@@ -102,6 +103,9 @@ struct Args {
     /// Enable debug output.
     debug: bool,
 
+    /// Detect and correct image skew before OCR.
+    deskew: bool,
+
     output_format: OutputFormat,
 
     /// Output file path. Defaults to stdout.
@@ -155,6 +159,7 @@ fn parse_args() -> Result<Args, lexopt::Error> {
     let mut beam_search = false;
     let mut clipboard = false;
     let mut debug = false;
+    let mut deskew = false;
     let mut detection_model = None;
     let mut low_confidence_mark = None;
     let mut min_confidence = None;
@@ -189,6 +194,9 @@ fn parse_args() -> Result<Args, lexopt::Error> {
             }
             Long("debug") => {
                 debug = true;
+            }
+            Long("deskew") => {
+                deskew = true;
             }
             Long("detect-model") => {
                 detection_model = Some(parser.value()?.string()?);
@@ -272,6 +280,11 @@ Options:
   -c, --clipboard
 
     Read image from system clipboard
+
+  --deskew
+
+    Detect and correct image skew before OCR (±15°, projection profile).
+    Use --debug to print the detected skew angle.
 
   --detect-model <path>
 
@@ -401,6 +414,7 @@ Advanced options:
         alphabet_file,
         beam_search,
         debug,
+        deskew,
         detection_model,
         input,
         low_confidence_mark,
@@ -621,11 +635,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // Read image into HWC tensor.
-    let (color_img, input_path): (NdTensor<u8, 3>, String) = match &args.input {
+    let (mut color_img, input_path): (NdTensor<u8, 3>, String) = match &args.input {
         InputSource::Clipboard => (load_image_from_clipboard()?, "<clipboard>".to_string()),
         InputSource::File(path) => (load_image_from_file(path)?, path.clone()),
         InputSource::Stdin => (load_image_from_stdin()?, "<stdin>".to_string()),
     };
+
+    if args.deskew {
+        let (corrected, angle) = deskew::deskew(color_img.view());
+        if args.debug {
+            eprintln!("deskew: detected {:.1}°, corrected", angle);
+        }
+        color_img = corrected;
+    }
 
     // Preprocess image for use with OCR engine.
     let color_img_source = ImageSource::from_tensor(color_img.view(), DimOrder::Hwc)?;
