@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{BufWriter, IsTerminal, Read};
 
 use anyhow::{anyhow, Context};
-use ocrs_cjk::{DecodeMethod, DimOrder, ImageSource, OcrEngine, OcrEngineParams, OcrInput};
+use ocrs_cjk::{DecodeMethod, DimOrder, ImageSource, OcrEngine, OcrEngineParams, OcrInput, TextItem};
 use rten_imageproc::RotatedRect;
 use rten_tensor::prelude::*;
 use rten_tensor::{NdTensor, NdTensorView};
@@ -151,6 +151,9 @@ struct Args {
 
     /// Apply Japanese OCR confusion corrections for chars below this confidence.
     post_correct_ja: Option<f32>,
+
+    /// Filter OCR output to lines intersecting [left, top, width, height].
+    region: Option<[i32; 4]>,
 }
 
 fn parse_args() -> Result<Args, lexopt::Error> {
@@ -168,6 +171,7 @@ fn parse_args() -> Result<Args, lexopt::Error> {
     let mut low_confidence_mark = None;
     let mut min_confidence = None;
     let mut post_correct_ja = None;
+    let mut region: Option<[i32; 4]> = None;
     let mut model_dir = None;
     let mut output_format = OutputFormat::Text;
     let mut output_path = None;
@@ -213,6 +217,18 @@ fn parse_args() -> Result<Args, lexopt::Error> {
                     .parse()
                     .map_err(|_| "invalid --min-confidence value (expected 0.0–1.0)")?;
                 min_confidence = Some(v.clamp(0.0, 1.0));
+            }
+            Long("region") => {
+                let s = parser.value()?.string()?;
+                let parts: Vec<i32> = s
+                    .split(',')
+                    .map(|v| v.trim().parse::<i32>())
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| "invalid --region: expected x,y,w,h (pixel integers)")?;
+                if parts.len() != 4 {
+                    return Err("--region requires exactly 4 values: x,y,w,h".into());
+                }
+                region = Some([parts[0], parts[1], parts[2], parts[3]]);
             }
             Long("post-correct-ja") => {
                 let v: f32 = parser
@@ -339,6 +355,11 @@ Options:
 
     Use a custom text recognition model
 
+  --region <x,y,w,h>
+
+    Filter OCR output to text lines intersecting this pixel region.
+    x,y = top-left corner; w,h = width and height.
+
   --version
 
     Display version info
@@ -439,6 +460,7 @@ Advanced options:
         low_confidence_mark,
         min_confidence,
         post_correct_ja,
+        region,
         model_dir,
         output_format,
         output_path,
@@ -468,6 +490,14 @@ const CJK_RECOGNITION_MODEL: &str = "https://huggingface.co/marsena/paddleocr-on
 pub(crate) const CJK_ALPHABET: &str = include_str!("../../models/alphabet.txt");
 
 /// Convert a decoded image into an HWC tensor.
+/// Return true if axis-aligned rect `a` intersects the given [left, top, w, h] region.
+fn rect_intersects(a: rten_imageproc::Rect, lx: i32, ty: i32, w: i32, h: i32) -> bool {
+    (a.left() as i32) < lx + w
+        && (a.right() as i32) > lx
+        && (a.top() as i32) < ty + h
+        && (a.bottom() as i32) > ty
+}
+
 fn image_to_tensor(image: image::DynamicImage) -> NdTensor<u8, 3> {
     let image = image.into_rgb8();
     let (width, height) = image.dimensions();
@@ -605,6 +635,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 } else {
                     text_lines
                 };
+                let text_lines = if let Some([lx, ty, w, h]) = args.region {
+                    text_lines
+                        .into_iter()
+                        .map(|line| {
+                            line.filter(|l| rect_intersects(l.bounding_rect(), lx, ty, w, h))
+                        })
+                        .collect()
+                } else {
+                    text_lines
+                };
                 page_results.push(pdf::PageOcrResult {
                     text_lines: text_lines.clone(),
                     image_hw: [img_h, img_w],
@@ -704,6 +744,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let line_texts = engine.recognize_text(&ocr_input, &line_rects)?;
     let line_texts = if let Some(t) = args.post_correct_ja {
         post_correct::apply_ja(&line_texts, t)
+    } else {
+        line_texts
+    };
+    let line_texts = if let Some([lx, ty, w, h]) = args.region {
+        line_texts
+            .into_iter()
+            .map(|line| line.filter(|l| rect_intersects(l.bounding_rect(), lx, ty, w, h)))
+            .collect()
     } else {
         line_texts
     };
