@@ -33,7 +33,10 @@ fn rounded_vertex_coords(rr: &RotatedRect) -> [[i32; 2]; 4] {
 }
 
 /// Build a `paragraphs` JSON value from a flat list of text lines.
-fn paragraphs_json(text_lines: &[Option<TextLine>]) -> serde_json::Value {
+///
+/// When `threshold` is `Some(t)`, words with confidence below `t` get
+/// `"low_confidence": true` added to their JSON object.
+fn paragraphs_json(text_lines: &[Option<TextLine>], threshold: Option<f32>) -> serde_json::Value {
     let line_items: Vec<_> = text_lines
         .iter()
         .filter_map(|line| line.as_ref())
@@ -41,11 +44,17 @@ fn paragraphs_json(text_lines: &[Option<TextLine>]) -> serde_json::Value {
             let word_items: Vec<_> = line
                 .words()
                 .map(|word| {
-                    json!({
+                    let conf = (word.confidence() * 100.0).round() / 100.0;
+                    let low = threshold.is_some_and(|t| word.confidence() < t);
+                    let mut obj = json!({
                         "text": word.to_string(),
-                        "confidence": (word.confidence() * 100.0).round() / 100.0,
+                        "confidence": conf,
                         "vertices": rounded_vertex_coords(&word.rotated_rect()),
-                    })
+                    });
+                    if low {
+                        obj["low_confidence"] = json!(true);
+                    }
+                    obj
                 })
                 .collect();
             json!({
@@ -71,7 +80,7 @@ fn ocr_json(args: FormatJsonArgs) -> serde_json::Value {
         "url": args.input_path,
         "image_width": width,
         "image_height": height,
-        "paragraphs": paragraphs_json(args.text_lines),
+        "paragraphs": paragraphs_json(args.text_lines, args.low_confidence_threshold),
     })
 }
 
@@ -95,6 +104,7 @@ fn hocr_page_div(
     hw: [usize; 2],
     lines: &[Option<TextLine>],
     page_idx: usize,
+    threshold: Option<f32>,
 ) -> String {
     let [height, width] = hw;
     let path = html_escape(path);
@@ -116,8 +126,14 @@ fn hocr_page_div(
             let wb = word.bounding_rect();
             let conf = (word.confidence() * 100.0).round() as u32;
             let text = html_escape(&word.to_string());
+            let low = threshold.is_some_and(|t| word.confidence() < t);
+            let class = if low {
+                "ocrx_word low-confidence"
+            } else {
+                "ocrx_word"
+            };
             out.push_str(&format!(
-                "      <span class=\"ocrx_word\" id=\"p{page_idx}_word_{line_idx}_{word_idx}\" \
+                "      <span class=\"{class}\" id=\"p{page_idx}_word_{line_idx}_{word_idx}\" \
                     title=\"bbox {} {} {} {}; x_wconf {conf}\">{text}</span>\n",
                 wb.left(),
                 wb.top(),
@@ -132,7 +148,12 @@ fn hocr_page_div(
 }
 
 /// Render one ALTO `<Page>` element for a single page.
-fn alto_page_elem(hw: [usize; 2], lines: &[Option<TextLine>], page_idx: usize) -> String {
+fn alto_page_elem(
+    hw: [usize; 2],
+    lines: &[Option<TextLine>],
+    page_idx: usize,
+    threshold: Option<f32>,
+) -> String {
     let [height, width] = hw;
     let mut out = format!(
         "    <Page ID=\"page_{page_idx}\" WIDTH=\"{width}\" HEIGHT=\"{height}\">\n\
@@ -153,10 +174,15 @@ fn alto_page_elem(hw: [usize; 2], lines: &[Option<TextLine>], page_idx: usize) -
             let wb = word.bounding_rect();
             let conf = (word.confidence() * 1000.0).round() / 1000.0;
             let content = html_escape(&word.to_string());
+            let quality = if threshold.is_some_and(|t| word.confidence() < t) {
+                " QUALITY=\"needs review\""
+            } else {
+                ""
+            };
             out.push_str(&format!(
                 "                 <String ID=\"p{page_idx}_word_{line_idx}_{word_idx}\" \
                     HPOS=\"{}\" VPOS=\"{}\" WIDTH=\"{}\" HEIGHT=\"{}\" \
-                    WC=\"{conf:.3}\" CONTENT=\"{content}\"/>\n",
+                    WC=\"{conf:.3}\"{quality} CONTENT=\"{content}\"/>\n",
                 wb.left(),
                 wb.top(),
                 wb.width(),
@@ -180,16 +206,35 @@ pub struct FormatJsonArgs<'a> {
 
     /// Lines of text recognized by OCR engine.
     pub text_lines: &'a [Option<TextLine>],
+
+    /// If `Some(t)`, words with confidence below `t` are marked in the output.
+    pub low_confidence_threshold: Option<f32>,
 }
 
 /// Format OCR outputs as plain text.
-pub fn format_text_output(text_lines: &[Option<TextLine>]) -> String {
-    let lines: Vec<String> = text_lines
+///
+/// When `threshold` is `Some(t)`, words with confidence below `t` are
+/// suffixed with `[?]`.
+pub fn format_text_output(text_lines: &[Option<TextLine>], threshold: Option<f32>) -> String {
+    text_lines
         .iter()
         .flatten()
-        .map(|line| line.to_string())
-        .collect();
-    lines.join("\n")
+        .map(|line| match threshold {
+            Some(t) => line
+                .words()
+                .map(|w| {
+                    if w.confidence() < t {
+                        format!("{}[?]", w)
+                    } else {
+                        w.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+            None => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Format OCR outputs as JSON.
@@ -212,7 +257,13 @@ fn html_escape(s: &str) -> String {
 /// `title` attributes containing `bbox` and `x_wconf` metadata.
 pub fn format_hocr_output(args: FormatJsonArgs) -> String {
     let mut out = hocr_header();
-    out.push_str(&hocr_page_div(args.input_path, args.input_hw, args.text_lines, 0));
+    out.push_str(&hocr_page_div(
+        args.input_path,
+        args.input_hw,
+        args.text_lines,
+        0,
+        args.low_confidence_threshold,
+    ));
     out.push_str("</body>\n</html>\n");
     out
 }
@@ -228,7 +279,12 @@ pub fn format_alto_output(args: FormatJsonArgs) -> String {
          <alto xmlns=\"http://www.loc.gov/standards/alto/ns-v4#\">\n\
            <Layout>\n"
         .to_string();
-    out.push_str(&alto_page_elem(args.input_hw, args.text_lines, 0));
+    out.push_str(&alto_page_elem(
+        args.input_hw,
+        args.text_lines,
+        0,
+        args.low_confidence_threshold,
+    ));
     out.push_str("  </Layout>\n</alto>\n");
     out
 }
@@ -237,6 +293,8 @@ pub fn format_alto_output(args: FormatJsonArgs) -> String {
 pub struct PageInfo<'a> {
     pub image_hw: [usize; 2],
     pub text_lines: &'a [Option<TextLine>],
+    /// If `Some(t)`, words with confidence below `t` are marked in the output.
+    pub low_confidence_threshold: Option<f32>,
 }
 
 /// Format multi-page PDF OCR output as JSON with per-page dimensions.
@@ -253,7 +311,7 @@ pub fn format_json_pdf_output(input_path: &str, pages: &[PageInfo]) -> String {
                 "page": i + 1,
                 "image_width": width,
                 "image_height": height,
-                "paragraphs": paragraphs_json(p.text_lines),
+                "paragraphs": paragraphs_json(p.text_lines, p.low_confidence_threshold),
             })
         })
         .collect();
@@ -265,7 +323,13 @@ pub fn format_json_pdf_output(input_path: &str, pages: &[PageInfo]) -> String {
 pub fn format_hocr_pdf_output(input_path: &str, pages: &[PageInfo]) -> String {
     let mut out = hocr_header();
     for (i, p) in pages.iter().enumerate() {
-        out.push_str(&hocr_page_div(input_path, p.image_hw, p.text_lines, i));
+        out.push_str(&hocr_page_div(
+            input_path,
+            p.image_hw,
+            p.text_lines,
+            i,
+            p.low_confidence_threshold,
+        ));
     }
     out.push_str("</body>\n</html>\n");
     out
@@ -279,7 +343,12 @@ pub fn format_alto_pdf_output(pages: &[PageInfo]) -> String {
            <Layout>\n"
         .to_string();
     for (i, p) in pages.iter().enumerate() {
-        out.push_str(&alto_page_elem(p.image_hw, p.text_lines, i));
+        out.push_str(&alto_page_elem(
+            p.image_hw,
+            p.text_lines,
+            i,
+            p.low_confidence_threshold,
+        ));
     }
     out.push_str("  </Layout>\n</alto>\n");
     out
@@ -411,6 +480,7 @@ mod tests {
             input_path: "image.jpeg",
             input_hw: [256, 256],
             text_lines: lines,
+            low_confidence_threshold: None,
         });
         let parsed_json: serde_json::Value = serde_json::from_str(&json).unwrap();
 
@@ -426,7 +496,7 @@ mod tests {
             None,
             Some(TextLine::new(gen_text_chars("line two", 10))),
         ];
-        let formatted = format_text_output(lines);
+        let formatted = format_text_output(lines, None);
         let formatted_lines: Vec<_> = formatted.lines().collect();
 
         assert_eq!(formatted_lines, ["line one", "line two",]);
@@ -469,6 +539,7 @@ mod tests {
             input_path: "test_cjk.png",
             input_hw: [80, 600],
             text_lines: lines,
+            low_confidence_threshold: None,
         });
         assert!(hocr.contains("<?xml"));
         assert!(hocr.contains("ocr_page"));
@@ -490,6 +561,7 @@ mod tests {
             input_path: "test_cjk.png",
             input_hw: [80, 600],
             text_lines: lines,
+            low_confidence_threshold: None,
         });
         assert!(alto.contains("<?xml"));
         assert!(alto.contains("<alto"));
@@ -510,6 +582,7 @@ mod tests {
             input_path: "test.png",
             input_hw: [100, 600],
             text_lines: lines,
+            low_confidence_threshold: None,
         });
         assert!(!hocr.contains(" < "), "raw '<' must be escaped");
         assert!(!hocr.contains(" & "), "raw '&' must be escaped");
@@ -549,6 +622,7 @@ mod tests {
             input_path: "test.png",
             input_hw: [80, 100],
             text_lines: lines,
+            low_confidence_threshold: None,
         });
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         let words = &parsed["paragraphs"][0]["lines"][0]["words"];

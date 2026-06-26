@@ -140,6 +140,9 @@ struct Args {
     /// Minimum confidence [0.0, 1.0] for words included in the PDF text layer.
     /// Words below this threshold are omitted from the invisible text overlay.
     min_confidence: Option<f32>,
+
+    /// Confidence threshold for marking low-confidence words in output.
+    low_confidence_mark: Option<f32>,
 }
 
 fn parse_args() -> Result<Args, lexopt::Error> {
@@ -153,6 +156,7 @@ fn parse_args() -> Result<Args, lexopt::Error> {
     let mut clipboard = false;
     let mut debug = false;
     let mut detection_model = None;
+    let mut low_confidence_mark = None;
     let mut min_confidence = None;
     let mut model_dir = None;
     let mut output_format = OutputFormat::Text;
@@ -196,6 +200,14 @@ fn parse_args() -> Result<Args, lexopt::Error> {
                     .parse()
                     .map_err(|_| "invalid --min-confidence value (expected 0.0–1.0)")?;
                 min_confidence = Some(v.clamp(0.0, 1.0));
+            }
+            Long("mark-low-confidence") => {
+                let v: f32 = parser
+                    .value()?
+                    .string()?
+                    .parse()
+                    .map_err(|_| "invalid --mark-low-confidence value (expected 0.0–1.0)")?;
+                low_confidence_mark = Some(v.clamp(0.0, 1.0));
             }
             Long("lang") => {
                 let _v = parser.value()?.string()?; // ja/zh/ko/zh-tw accepted; all use same PP-OCRv5 model
@@ -274,6 +286,14 @@ Options:
   -j, --json
 
     Output text and structure in JSON format
+
+  --mark-low-confidence <0.0–1.0>
+
+    Mark words with confidence below this threshold.
+    Text: appends [?] after each low-confidence word.
+    JSON: adds \"low_confidence\": true to word objects.
+    hOCR: adds CSS class \"low-confidence\" to ocrx_word spans.
+    ALTO: adds QUALITY=\"needs review\" to String elements.
 
   -o, --output <path>
 
@@ -383,6 +403,7 @@ Advanced options:
         debug,
         detection_model,
         input,
+        low_confidence_mark,
         min_confidence,
         model_dir,
         output_format,
@@ -565,11 +586,17 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let page_infos: Vec<PageInfo> = page_results
                 .iter()
-                .map(|r| PageInfo { image_hw: r.image_hw, text_lines: &r.text_lines })
+                .map(|r| PageInfo {
+                    image_hw: r.image_hw,
+                    text_lines: &r.text_lines,
+                    low_confidence_threshold: args.low_confidence_mark,
+                })
                 .collect();
 
             match args.output_format {
-                OutputFormat::Text => write_str(format_text_output(&all_lines))?,
+                OutputFormat::Text => {
+                    write_str(format_text_output(&all_lines, args.low_confidence_mark))?
+                }
                 OutputFormat::Json => {
                     write_str(format_json_pdf_output(&pdf_path, &page_infos))?
                 }
@@ -641,7 +668,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     match args.output_format {
         OutputFormat::Text => {
-            let content = format_text_output(&line_texts);
+            let content = format_text_output(&line_texts, args.low_confidence_mark);
             write_output_str(content)?;
         }
         OutputFormat::Json => {
@@ -649,6 +676,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 input_path: &input_path,
                 input_hw: color_img.shape()[1..].try_into()?,
                 text_lines: &line_texts,
+                low_confidence_threshold: args.low_confidence_mark,
             });
             write_output_str(content)?;
         }
@@ -670,6 +698,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 input_path: &input_path,
                 input_hw: color_img.shape()[1..].try_into()?,
                 text_lines: &line_texts,
+                low_confidence_threshold: args.low_confidence_mark,
             });
             write_output_str(content)?;
         }
@@ -678,6 +707,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 input_path: &input_path,
                 input_hw: color_img.shape()[1..].try_into()?,
                 text_lines: &line_texts,
+                low_confidence_threshold: args.low_confidence_mark,
             });
             write_output_str(content)?;
         }
