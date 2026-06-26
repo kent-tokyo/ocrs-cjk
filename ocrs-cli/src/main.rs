@@ -11,6 +11,7 @@ use rten_tensor::{NdTensor, NdTensorView};
 
 mod deskew;
 mod doctor;
+mod post_correct;
 mod models;
 use models::{load_model, ModelSource};
 mod output;
@@ -147,6 +148,9 @@ struct Args {
 
     /// Confidence threshold for marking low-confidence words in output.
     low_confidence_mark: Option<f32>,
+
+    /// Apply Japanese OCR confusion corrections for chars below this confidence.
+    post_correct_ja: Option<f32>,
 }
 
 fn parse_args() -> Result<Args, lexopt::Error> {
@@ -163,6 +167,7 @@ fn parse_args() -> Result<Args, lexopt::Error> {
     let mut detection_model = None;
     let mut low_confidence_mark = None;
     let mut min_confidence = None;
+    let mut post_correct_ja = None;
     let mut model_dir = None;
     let mut output_format = OutputFormat::Text;
     let mut output_path = None;
@@ -208,6 +213,14 @@ fn parse_args() -> Result<Args, lexopt::Error> {
                     .parse()
                     .map_err(|_| "invalid --min-confidence value (expected 0.0–1.0)")?;
                 min_confidence = Some(v.clamp(0.0, 1.0));
+            }
+            Long("post-correct-ja") => {
+                let v: f32 = parser
+                    .value()?
+                    .string()?
+                    .parse()
+                    .map_err(|_| "invalid --post-correct-ja value (expected 0.0–1.0)")?;
+                post_correct_ja = Some(v.clamp(0.0, 1.0));
             }
             Long("mark-low-confidence") => {
                 let v: f32 = parser
@@ -303,6 +316,12 @@ Options:
   --mark-low-confidence <0.0–1.0>
 
     Mark words with confidence below this threshold.
+
+  --post-correct-ja <0.0–1.0>
+
+    Apply Japanese OCR confusion corrections (0/O, 1/l, 曰→日) using
+    character context. Only chars with confidence below this threshold
+    are corrected. Recommended: 0.7. Applies to all output formats.
     Text: appends [?] after each low-confidence word.
     JSON: adds \"low_confidence\": true to word objects.
     hOCR: adds CSS class \"low-confidence\" to ocrx_word spans.
@@ -419,6 +438,7 @@ Advanced options:
         input,
         low_confidence_mark,
         min_confidence,
+        post_correct_ja,
         model_dir,
         output_format,
         output_path,
@@ -580,6 +600,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let word_rects = engine.detect_words(&ocr_input)?;
                 let line_rects = engine.find_text_lines(&ocr_input, &word_rects);
                 let text_lines = engine.recognize_text(&ocr_input, &line_rects)?;
+                let text_lines = if let Some(t) = args.post_correct_ja {
+                    post_correct::apply_ja(&text_lines, t)
+                } else {
+                    text_lines
+                };
                 page_results.push(pdf::PageOcrResult {
                     text_lines: text_lines.clone(),
                     image_hw: [img_h, img_w],
@@ -677,6 +702,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let line_texts = engine.recognize_text(&ocr_input, &line_rects)?;
+    let line_texts = if let Some(t) = args.post_correct_ja {
+        post_correct::apply_ja(&line_texts, t)
+    } else {
+        line_texts
+    };
 
     let write_output_str = |content: String| -> Result<(), Box<dyn Error>> {
         if let Some(output_path) = &args.output_path {
