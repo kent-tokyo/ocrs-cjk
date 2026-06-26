@@ -35,6 +35,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Create placeholder alphabet for build
+        shell: bash
         run: mkdir -p models && touch models/alphabet.txt
 
       - name: Build (dev)
@@ -105,6 +106,10 @@ jobs:
         with:
           path: ~/.cache/ocrs/
           key: ocrs-default-models-v1
+
+      - name: Create placeholder alphabet for build
+        shell: bash
+        run: mkdir -p models && touch models/alphabet.txt
 
       - name: Build release binary
         run: cargo build --release -p ocrs-cjk-cli
