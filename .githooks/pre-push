@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+# Ensure models/alphabet.txt exists so include_str! compiles
+mkdir -p models
+[ -f models/alphabet.txt ] || touch models/alphabet.txt
+
+echo "pre-push: cargo build..."
+cargo build 2>&1
+
+echo "pre-push: cargo clippy..."
+cargo clippy --workspace 2>&1
+
+echo "pre-push: cargo audit..."
+cargo audit 2>&1
+
+echo "pre-push: all checks passed."

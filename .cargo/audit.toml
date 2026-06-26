@@ -1,0 +1,9 @@
+[advisories]
+# rustls-webpki 0.102.x vulnerabilities: blocked upstream (ureq 3.x pins rustls 0.23
+# which requires webpki 0.102). Will resolve when ureq adopts rustls 0.24+.
+ignore = [
+    "RUSTSEC-2026-0049",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
+]

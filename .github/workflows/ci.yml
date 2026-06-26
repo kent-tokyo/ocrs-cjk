@@ -34,6 +34,9 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Create placeholder alphabet for build
+        run: mkdir -p models && touch models/alphabet.txt
+
       - name: Build (dev)
         run: cargo build
 
@@ -72,7 +75,7 @@ jobs:
           key: wasm32-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: WASM build (ocrs library)
-        run: cargo build --target wasm32-unknown-unknown --features export-wasm -p ocrs
+        run: cargo build --target wasm32-unknown-unknown --features export-wasm -p ocrs-cjk
 
   # ─────────────────────────────────────────────────────────────────────────
   # Job 3: English end-to-end tests
@@ -104,7 +107,7 @@ jobs:
           key: ocrs-default-models-v1
 
       - name: Build release binary
-        run: cargo build --release -p ocrs-cli
+        run: cargo build --release -p ocrs-cjk-cli
 
       - name: Run English E2E tests
         run: python3 tools/test-e2e.py ocrs-cli/test-data/
@@ -157,7 +160,7 @@ jobs:
           fi
 
       - name: Build release binary (ONNX support)
-        run: cargo build --release -p ocrs-cli --features onnx
+        run: cargo build --release -p ocrs-cjk-cli --features onnx
 
       - name: Run CJK E2E tests
         run: bash tools/test-e2e-cjk.sh models/
