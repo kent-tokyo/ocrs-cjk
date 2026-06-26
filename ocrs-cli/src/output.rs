@@ -21,6 +21,9 @@ pub enum OutputFormat {
 
     /// Output text in ALTO XML format (includes bounding boxes and confidence).
     Alto,
+
+    /// Output extracted text as Markdown (paragraphs separated by blank lines).
+    Markdown,
 }
 
 /// Return the coordinates of vertices of `rr` as an array of `[x, y]` points.
@@ -235,6 +238,43 @@ pub fn format_text_output(text_lines: &[Option<TextLine>], threshold: Option<f32
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Format OCR outputs as Markdown.
+///
+/// Each recognized line becomes a paragraph (separated by a blank line).
+/// Combines naturally with `--mark-low-confidence` for LLM review pipelines.
+pub fn format_markdown_output(text_lines: &[Option<TextLine>], threshold: Option<f32>) -> String {
+    text_lines
+        .iter()
+        .flatten()
+        .map(|line| match threshold {
+            Some(t) => line
+                .words()
+                .map(|w| {
+                    if w.confidence() < t {
+                        format!("{}[?]", w)
+                    } else {
+                        w.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+            None => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Format multi-page PDF OCR output as Markdown.
+///
+/// Pages are separated by a horizontal rule (`---`).
+pub fn format_markdown_pdf_output(pages: &[PageInfo]) -> String {
+    pages
+        .iter()
+        .map(|p| format_markdown_output(p.text_lines, p.low_confidence_threshold))
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n")
 }
 
 /// Format OCR outputs as JSON.
