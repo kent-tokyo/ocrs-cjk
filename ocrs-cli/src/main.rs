@@ -155,6 +155,9 @@ struct Args {
 
     /// Filter OCR output to lines intersecting [left, top, width, height].
     region: Option<[i32; 4]>,
+
+    /// Filter OCR output to lines containing this text.
+    find_text: Option<String>,
 }
 
 fn parse_args() -> Result<Args, lexopt::Error> {
@@ -171,6 +174,7 @@ fn parse_args() -> Result<Args, lexopt::Error> {
     let mut detection_model = None;
     let mut low_confidence_mark = None;
     let mut min_confidence = None;
+    let mut find_text: Option<String> = None;
     let mut post_correct_ja = None;
     let mut region: Option<[i32; 4]> = None;
     let mut model_dir = None;
@@ -218,6 +222,9 @@ fn parse_args() -> Result<Args, lexopt::Error> {
                     .parse()
                     .map_err(|_| "invalid --min-confidence value (expected 0.0–1.0)")?;
                 min_confidence = Some(v.clamp(0.0, 1.0));
+            }
+            Long("find-text") => {
+                find_text = Some(parser.value()?.string()?);
             }
             Long("region") => {
                 let s = parser.value()?.string()?;
@@ -322,6 +329,11 @@ Options:
   --detect-model <path>
 
     Use a custom text detection model
+
+  --find-text <query>
+
+    Filter OCR output to lines containing this text (case-sensitive, Unicode).
+    Combine with --json to get bounding boxes of matching lines.
 
   --lang <ja|zh|ko|zh-tw>
 
@@ -468,6 +480,7 @@ Advanced options:
         input,
         low_confidence_mark,
         min_confidence,
+        find_text,
         post_correct_ja,
         region,
         model_dir,
@@ -654,6 +667,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 } else {
                     text_lines
                 };
+                let text_lines = if let Some(ref q) = args.find_text {
+                    text_lines
+                        .into_iter()
+                        .map(|line| line.filter(|l| l.to_string().contains(q.as_str())))
+                        .collect()
+                } else {
+                    text_lines
+                };
                 page_results.push(pdf::PageOcrResult {
                     text_lines: text_lines.clone(),
                     image_hw: [img_h, img_w],
@@ -763,6 +784,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         line_texts
             .into_iter()
             .map(|line| line.filter(|l| rect_intersects(l.bounding_rect(), lx, ty, w, h)))
+            .collect()
+    } else {
+        line_texts
+    };
+    let line_texts = if let Some(ref q) = args.find_text {
+        line_texts
+            .into_iter()
+            .map(|line| line.filter(|l| l.to_string().contains(q.as_str())))
             .collect()
     } else {
         line_texts
