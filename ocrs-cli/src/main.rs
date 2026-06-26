@@ -16,8 +16,9 @@ mod output;
 #[cfg(not(target_arch = "wasm32"))]
 mod pdf;
 use output::{
-    format_alto_output, format_hocr_output, format_json_output, format_text_output,
-    generate_annotated_png, FormatJsonArgs, GeneratePngArgs, OutputFormat,
+    format_alto_output, format_alto_pdf_output, format_hocr_output, format_hocr_pdf_output,
+    format_json_output, format_json_pdf_output, format_text_output, generate_annotated_png,
+    FormatJsonArgs, GeneratePngArgs, OutputFormat, PageInfo,
 };
 
 /// Write a CHW image to a PNG file in `path`.
@@ -562,23 +563,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Ok(())
             };
 
+            let page_infos: Vec<PageInfo> = page_results
+                .iter()
+                .map(|r| PageInfo { image_hw: r.image_hw, text_lines: &r.text_lines })
+                .collect();
+
             match args.output_format {
                 OutputFormat::Text => write_str(format_text_output(&all_lines))?,
-                OutputFormat::Json => write_str(format_json_output(FormatJsonArgs {
-                    input_path: &pdf_path,
-                    input_hw: [0, 0], // multi-page: no single hw
-                    text_lines: &all_lines,
-                }))?,
-                OutputFormat::Hocr => write_str(format_hocr_output(FormatJsonArgs {
-                    input_path: &pdf_path,
-                    input_hw: [0, 0],
-                    text_lines: &all_lines,
-                }))?,
-                OutputFormat::Alto => write_str(format_alto_output(FormatJsonArgs {
-                    input_path: &pdf_path,
-                    input_hw: [0, 0],
-                    text_lines: &all_lines,
-                }))?,
+                OutputFormat::Json => {
+                    write_str(format_json_pdf_output(&pdf_path, &page_infos))?
+                }
+                OutputFormat::Hocr => {
+                    write_str(format_hocr_pdf_output(&pdf_path, &page_infos))?
+                }
+                OutputFormat::Alto => write_str(format_alto_pdf_output(&page_infos))?,
                 OutputFormat::Png => {
                     return Err("--png is not supported for PDF input".into());
                 }

@@ -32,18 +32,8 @@ fn rounded_vertex_coords(rr: &RotatedRect) -> [[i32; 2]; 4] {
         .map(|point| [point.x.round() as i32, point.y.round() as i32])
 }
 
-/// Format extracted text and hierarchical layout information as JSON.
-///
-/// The JSON format roughly follows the structure of the ground truth data in
-/// the [HierText](https://github.com/google-research-datasets/hiertext)
-/// dataset, on which ocrs's models were trained.
-fn ocr_json(args: FormatJsonArgs) -> serde_json::Value {
-    let FormatJsonArgs {
-        input_path,
-        input_hw,
-        text_lines,
-    } = args;
-
+/// Build a `paragraphs` JSON value from a flat list of text lines.
+fn paragraphs_json(text_lines: &[Option<TextLine>]) -> serde_json::Value {
     let line_items: Vec<_> = text_lines
         .iter()
         .filter_map(|line| line.as_ref())
@@ -58,7 +48,6 @@ fn ocr_json(args: FormatJsonArgs) -> serde_json::Value {
                     })
                 })
                 .collect();
-
             json!({
                 "text": line.to_string(),
                 "words": word_items,
@@ -66,20 +55,122 @@ fn ocr_json(args: FormatJsonArgs) -> serde_json::Value {
             })
         })
         .collect();
+    // nb. Since we haven't got layout analysis info here, we just put all
+    // the lines on one paragraph.
+    json!([{ "lines": serde_json::Value::Array(line_items) }])
+}
 
-    let [height, width] = input_hw;
-
+/// Format extracted text and hierarchical layout information as JSON.
+///
+/// The JSON format roughly follows the structure of the ground truth data in
+/// the [HierText](https://github.com/google-research-datasets/hiertext)
+/// dataset, on which ocrs's models were trained.
+fn ocr_json(args: FormatJsonArgs) -> serde_json::Value {
+    let [height, width] = args.input_hw;
     json!({
-        "url": input_path,
+        "url": args.input_path,
         "image_width": width,
         "image_height": height,
-
-        // nb. Since we haven't got layout analysis info here, we just put all
-        // the lines on one paragraph.
-        "paragraphs": [{
-            "lines": serde_json::Value::Array(line_items),
-        }]
+        "paragraphs": paragraphs_json(args.text_lines),
     })
+}
+
+fn hocr_header() -> String {
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+     <!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\"\n\
+       \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">\n\
+     <html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"en\" lang=\"en\">\n\
+     <head>\n\
+       <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"/>\n\
+       <meta name=\"ocr-system\" content=\"ocrs-cjk\"/>\n\
+       <meta name=\"ocr-capabilities\" content=\"ocr_page ocr_line ocrx_word\"/>\n\
+     </head>\n\
+     <body>\n"
+    .to_string()
+}
+
+/// Render one hOCR `<div class="ocr_page">` block for a single page.
+fn hocr_page_div(
+    path: &str,
+    hw: [usize; 2],
+    lines: &[Option<TextLine>],
+    page_idx: usize,
+) -> String {
+    let [height, width] = hw;
+    let path = html_escape(path);
+    let mut out = format!(
+        "  <div class=\"ocr_page\" id=\"page_{page_idx}\" \
+            title=\"image &quot;{path}&quot;; bbox 0 0 {width} {height}; ppageno {page_idx}\">\n"
+    );
+    for (line_idx, line) in lines.iter().flatten().enumerate() {
+        let lb = line.bounding_rect();
+        out.push_str(&format!(
+            "    <span class=\"ocr_line\" id=\"p{page_idx}_line_{line_idx}\" \
+                title=\"bbox {} {} {} {}\">\n",
+            lb.left(),
+            lb.top(),
+            lb.right(),
+            lb.bottom()
+        ));
+        for (word_idx, word) in line.words().enumerate() {
+            let wb = word.bounding_rect();
+            let conf = (word.confidence() * 100.0).round() as u32;
+            let text = html_escape(&word.to_string());
+            out.push_str(&format!(
+                "      <span class=\"ocrx_word\" id=\"p{page_idx}_word_{line_idx}_{word_idx}\" \
+                    title=\"bbox {} {} {} {}; x_wconf {conf}\">{text}</span>\n",
+                wb.left(),
+                wb.top(),
+                wb.right(),
+                wb.bottom(),
+            ));
+        }
+        out.push_str("    </span>\n");
+    }
+    out.push_str("  </div>\n");
+    out
+}
+
+/// Render one ALTO `<Page>` element for a single page.
+fn alto_page_elem(hw: [usize; 2], lines: &[Option<TextLine>], page_idx: usize) -> String {
+    let [height, width] = hw;
+    let mut out = format!(
+        "    <Page ID=\"page_{page_idx}\" WIDTH=\"{width}\" HEIGHT=\"{height}\">\n\
+           <PrintSpace HPOS=\"0\" VPOS=\"0\" WIDTH=\"{width}\" HEIGHT=\"{height}\">\n\
+             <TextBlock ID=\"p{page_idx}_block_0\" HPOS=\"0\" VPOS=\"0\" WIDTH=\"{width}\" HEIGHT=\"{height}\">\n"
+    );
+    for (line_idx, line) in lines.iter().flatten().enumerate() {
+        let lb = line.bounding_rect();
+        out.push_str(&format!(
+            "               <TextLine ID=\"p{page_idx}_line_{line_idx}\" \
+                HPOS=\"{}\" VPOS=\"{}\" WIDTH=\"{}\" HEIGHT=\"{}\">\n",
+            lb.left(),
+            lb.top(),
+            lb.width(),
+            lb.height()
+        ));
+        for (word_idx, word) in line.words().enumerate() {
+            let wb = word.bounding_rect();
+            let conf = (word.confidence() * 1000.0).round() / 1000.0;
+            let content = html_escape(&word.to_string());
+            out.push_str(&format!(
+                "                 <String ID=\"p{page_idx}_word_{line_idx}_{word_idx}\" \
+                    HPOS=\"{}\" VPOS=\"{}\" WIDTH=\"{}\" HEIGHT=\"{}\" \
+                    WC=\"{conf:.3}\" CONTENT=\"{content}\"/>\n",
+                wb.left(),
+                wb.top(),
+                wb.width(),
+                wb.height(),
+            ));
+        }
+        out.push_str("               </TextLine>\n");
+    }
+    out.push_str(
+        "             </TextBlock>\n\
+           </PrintSpace>\n\
+         </Page>\n",
+    );
+    out
 }
 
 /// Input data for [format_json_output].
@@ -120,53 +211,9 @@ fn html_escape(s: &str) -> String {
 /// document using `ocr_page`, `ocr_line`, and `ocrx_word` CSS classes with
 /// `title` attributes containing `bbox` and `x_wconf` metadata.
 pub fn format_hocr_output(args: FormatJsonArgs) -> String {
-    let [height, width] = args.input_hw;
-    let path = html_escape(args.input_path);
-
-    let mut out = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-         <!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\"\n\
-           \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">\n\
-         <html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"en\" lang=\"en\">\n\
-         <head>\n\
-           <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"/>\n\
-           <meta name=\"ocr-system\" content=\"ocrs-cjk\"/>\n\
-           <meta name=\"ocr-capabilities\" content=\"ocr_page ocr_line ocrx_word\"/>\n\
-         </head>\n\
-         <body>\n\
-           <div class=\"ocr_page\" id=\"page_1\" \
-               title=\"image &quot;{path}&quot;; bbox 0 0 {width} {height}; ppageno 0\">\n"
-    );
-
-    for (line_idx, line) in args.text_lines.iter().flatten().enumerate() {
-        let lb = line.bounding_rect();
-        out.push_str(&format!(
-            "    <span class=\"ocr_line\" id=\"line_{line_idx}\" \
-                title=\"bbox {} {} {} {}\">\n",
-            lb.left(),
-            lb.top(),
-            lb.right(),
-            lb.bottom()
-        ));
-
-        for (word_idx, word) in line.words().enumerate() {
-            let wb = word.bounding_rect();
-            let conf = (word.confidence() * 100.0).round() as u32;
-            let text = html_escape(&word.to_string());
-            out.push_str(&format!(
-                "      <span class=\"ocrx_word\" id=\"word_{line_idx}_{word_idx}\" \
-                    title=\"bbox {} {} {} {}; x_wconf {conf}\">{text}</span>\n",
-                wb.left(),
-                wb.top(),
-                wb.right(),
-                wb.bottom(),
-            ));
-        }
-
-        out.push_str("    </span>\n");
-    }
-
-    out.push_str("  </div>\n</body>\n</html>\n");
+    let mut out = hocr_header();
+    out.push_str(&hocr_page_div(args.input_path, args.input_hw, args.text_lines, 0));
+    out.push_str("</body>\n</html>\n");
     out
 }
 
@@ -176,53 +223,65 @@ pub fn format_hocr_output(args: FormatJsonArgs) -> String {
 /// containing bounding boxes (`HPOS`, `VPOS`, `WIDTH`, `HEIGHT`) and
 /// word confidence (`WC`).
 pub fn format_alto_output(args: FormatJsonArgs) -> String {
-    let [height, width] = args.input_hw;
-
-    let mut out = format!(
+    let mut out =
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <alto xmlns=\"http://www.loc.gov/standards/alto/ns-v4#\">\n\
-           <Layout>\n\
-             <Page ID=\"page_0\" WIDTH=\"{width}\" HEIGHT=\"{height}\">\n\
-               <PrintSpace HPOS=\"0\" VPOS=\"0\" WIDTH=\"{width}\" HEIGHT=\"{height}\">\n\
-                 <TextBlock ID=\"block_0\" HPOS=\"0\" VPOS=\"0\" WIDTH=\"{width}\" HEIGHT=\"{height}\">\n"
-    );
+           <Layout>\n"
+        .to_string();
+    out.push_str(&alto_page_elem(args.input_hw, args.text_lines, 0));
+    out.push_str("  </Layout>\n</alto>\n");
+    out
+}
 
-    for (line_idx, line) in args.text_lines.iter().flatten().enumerate() {
-        let lb = line.bounding_rect();
-        out.push_str(&format!(
-            "                   <TextLine ID=\"line_{line_idx}\" \
-                HPOS=\"{}\" VPOS=\"{}\" WIDTH=\"{}\" HEIGHT=\"{}\">\n",
-            lb.left(),
-            lb.top(),
-            lb.width(),
-            lb.height()
-        ));
+/// Per-page data for PDF output functions.
+pub struct PageInfo<'a> {
+    pub image_hw: [usize; 2],
+    pub text_lines: &'a [Option<TextLine>],
+}
 
-        for (word_idx, word) in line.words().enumerate() {
-            let wb = word.bounding_rect();
-            let conf = (word.confidence() * 1000.0).round() / 1000.0;
-            let content = html_escape(&word.to_string());
-            out.push_str(&format!(
-                "                     <String ID=\"word_{line_idx}_{word_idx}\" \
-                    HPOS=\"{}\" VPOS=\"{}\" WIDTH=\"{}\" HEIGHT=\"{}\" \
-                    WC=\"{conf:.3}\" CONTENT=\"{content}\"/>\n",
-                wb.left(),
-                wb.top(),
-                wb.width(),
-                wb.height(),
-            ));
-        }
+/// Format multi-page PDF OCR output as JSON with per-page dimensions.
+///
+/// Unlike [`format_json_output`], this produces a `"pages"` array so each
+/// page can carry its own `image_width` / `image_height`.
+pub fn format_json_pdf_output(input_path: &str, pages: &[PageInfo]) -> String {
+    let page_values: Vec<serde_json::Value> = pages
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let [height, width] = p.image_hw;
+            json!({
+                "page": i + 1,
+                "image_width": width,
+                "image_height": height,
+                "paragraphs": paragraphs_json(p.text_lines),
+            })
+        })
+        .collect();
+    let doc = json!({ "url": input_path, "pages": page_values });
+    serde_json::to_string_pretty(&doc).expect("JSON formatting failed")
+}
 
-        out.push_str("                   </TextLine>\n");
+/// Format multi-page PDF OCR output as hOCR with one `ocr_page` div per page.
+pub fn format_hocr_pdf_output(input_path: &str, pages: &[PageInfo]) -> String {
+    let mut out = hocr_header();
+    for (i, p) in pages.iter().enumerate() {
+        out.push_str(&hocr_page_div(input_path, p.image_hw, p.text_lines, i));
     }
+    out.push_str("</body>\n</html>\n");
+    out
+}
 
-    out.push_str(
-        "                 </TextBlock>\n\
-               </PrintSpace>\n\
-             </Page>\n\
-           </Layout>\n\
-         </alto>\n",
-    );
+/// Format multi-page PDF OCR output as ALTO XML with one `<Page>` per page.
+pub fn format_alto_pdf_output(pages: &[PageInfo]) -> String {
+    let mut out =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <alto xmlns=\"http://www.loc.gov/standards/alto/ns-v4#\">\n\
+           <Layout>\n"
+        .to_string();
+    for (i, p) in pages.iter().enumerate() {
+        out.push_str(&alto_page_elem(p.image_hw, p.text_lines, i));
+    }
+    out.push_str("  </Layout>\n</alto>\n");
     out
 }
 
