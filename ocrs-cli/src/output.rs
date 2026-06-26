@@ -5,6 +5,9 @@ use serde_json::json;
 
 use ocrs_cjk::{TextItem, TextLine};
 
+use crate::furigana;
+use crate::table::{self, Table};
+
 pub enum OutputFormat {
     /// Output a PNG image containing a copy of the input image annotated with
     /// text bounding boxes.
@@ -27,6 +30,15 @@ pub enum OutputFormat {
 
     /// Output per-word data as tab-separated values (text, bbox, confidence).
     Tsv,
+
+    /// Output text blocks with reading order numbers and block-level bounding boxes.
+    BlocksJson,
+
+    /// Output furigana-separated JSON with `text` and `ruby` fields per line.
+    FuriganaJson,
+
+    /// Output JSON with per-word `needs_review` flags and `suspected_chars` for triage.
+    ReviewJson,
 }
 
 /// Return the coordinates of vertices of `rr` as an array of `[x, y]` points.
@@ -38,37 +50,37 @@ fn rounded_vertex_coords(rr: &RotatedRect) -> [[i32; 2]; 4] {
         .map(|point| [point.x.round() as i32, point.y.round() as i32])
 }
 
+/// Serialize a single `TextLine` to JSON (words + vertices).
+fn line_to_json(line: &TextLine, threshold: Option<f32>) -> serde_json::Value {
+    let word_items: Vec<_> = line
+        .words()
+        .map(|word| {
+            let conf = (word.confidence() * 100.0).round() / 100.0;
+            let low = threshold.is_some_and(|t| word.confidence() < t);
+            let mut obj = json!({
+                "text": word.to_string(),
+                "confidence": conf,
+                "vertices": rounded_vertex_coords(&word.rotated_rect()),
+            });
+            if low {
+                obj["low_confidence"] = json!(true);
+            }
+            obj
+        })
+        .collect();
+    json!({
+        "text": line.to_string(),
+        "words": word_items,
+        "vertices": rounded_vertex_coords(&line.rotated_rect()),
+    })
+}
+
 /// Build a `paragraphs` JSON value from a flat list of text lines.
-///
-/// When `threshold` is `Some(t)`, words with confidence below `t` get
-/// `"low_confidence": true` added to their JSON object.
 fn paragraphs_json(text_lines: &[Option<TextLine>], threshold: Option<f32>) -> serde_json::Value {
     let line_items: Vec<_> = text_lines
         .iter()
         .filter_map(|line| line.as_ref())
-        .map(|line| {
-            let word_items: Vec<_> = line
-                .words()
-                .map(|word| {
-                    let conf = (word.confidence() * 100.0).round() / 100.0;
-                    let low = threshold.is_some_and(|t| word.confidence() < t);
-                    let mut obj = json!({
-                        "text": word.to_string(),
-                        "confidence": conf,
-                        "vertices": rounded_vertex_coords(&word.rotated_rect()),
-                    });
-                    if low {
-                        obj["low_confidence"] = json!(true);
-                    }
-                    obj
-                })
-                .collect();
-            json!({
-                "text": line.to_string(),
-                "words": word_items,
-                "vertices": rounded_vertex_coords(&line.rotated_rect()),
-            })
-        })
+        .map(|line| line_to_json(line, threshold))
         .collect();
     // nb. Since we haven't got layout analysis info here, we just put all
     // the lines on one paragraph.
@@ -82,12 +94,16 @@ fn paragraphs_json(text_lines: &[Option<TextLine>], threshold: Option<f32>) -> s
 /// dataset, on which ocrs's models were trained.
 fn ocr_json(args: FormatJsonArgs) -> serde_json::Value {
     let [height, width] = args.input_hw;
-    json!({
+    let mut obj = json!({
         "url": args.input_path,
         "image_width": width,
         "image_height": height,
         "paragraphs": paragraphs_json(args.text_lines, args.low_confidence_threshold),
-    })
+    });
+    if let Some(tables) = args.tables {
+        obj["tables"] = table::tables_json(tables);
+    }
+    obj
 }
 
 fn hocr_header() -> String {
@@ -215,6 +231,9 @@ pub struct FormatJsonArgs<'a> {
 
     /// If `Some(t)`, words with confidence below `t` are marked in the output.
     pub low_confidence_threshold: Option<f32>,
+
+    /// If `Some(tables)`, a `"tables"` array is added to the JSON output.
+    pub tables: Option<&'a [Table]>,
 }
 
 /// Format OCR outputs as plain text.
@@ -346,6 +365,147 @@ pub fn format_tsv_pdf_output(pages: &[PageInfo]) -> String {
 pub fn format_json_output(args: FormatJsonArgs) -> String {
     let json_data = ocr_json(args);
     serde_json::to_string_pretty(&json_data).expect("JSON formatting failed")
+}
+
+/// Format OCR output as a blocks-JSON document with reading order.
+///
+/// Groups consecutive text lines into logical blocks (paragraphs) using a
+/// vertical-gap heuristic, assigns sequential `reading_order` numbers, and
+/// outputs each block with its axis-aligned bounding box.
+pub fn format_blocks_json_output(args: FormatJsonArgs) -> String {
+    let [height, width] = args.input_hw;
+    let blocks = table::group_into_blocks(args.text_lines);
+    let block_values: Vec<serde_json::Value> = blocks
+        .iter()
+        .enumerate()
+        .map(|(i, block)| {
+            let top = block.iter().map(|l| l.bounding_rect().top()).min().unwrap();
+            let left = block.iter().map(|l| l.bounding_rect().left()).min().unwrap();
+            let bottom = block.iter().map(|l| l.bounding_rect().bottom()).max().unwrap();
+            let right = block.iter().map(|l| l.bounding_rect().right()).max().unwrap();
+            let text = block
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let line_items: Vec<serde_json::Value> = block
+                .iter()
+                .map(|line| line_to_json(line, args.low_confidence_threshold))
+                .collect();
+            json!({
+                "type": "paragraph",
+                "reading_order": i + 1,
+                "bbox": {"x": left, "y": top, "width": right - left, "height": bottom - top},
+                "text": text,
+                "lines": line_items,
+            })
+        })
+        .collect();
+    let doc = json!({
+        "url": args.input_path,
+        "image_width": width,
+        "image_height": height,
+        "blocks": block_values,
+    });
+    serde_json::to_string_pretty(&doc).expect("JSON formatting failed")
+}
+
+/// Format OCR output as furigana-separated JSON.
+///
+/// Each recognized text line is output with a `"text"` field (main text) and
+/// a `"ruby"` field (associated furigana/kana annotation, or null if none).
+/// Furigana lines are detected by character height and kana ratio heuristics
+/// and are consumed (not emitted as separate lines).
+pub fn format_furigana_json_output(args: FormatJsonArgs) -> String {
+    let [height, width] = args.input_hw;
+    let ruby_lines = furigana::detect_ruby(args.text_lines);
+    let line_values: Vec<serde_json::Value> = ruby_lines
+        .iter()
+        .map(|rl| {
+            let b = rl.bbox;
+            json!({
+                "text": rl.text,
+                "ruby": rl.ruby,
+                "bbox": {"x": b.left(), "y": b.top(), "width": b.width(), "height": b.height()},
+            })
+        })
+        .collect();
+    let doc = json!({
+        "url": args.input_path,
+        "image_width": width,
+        "image_height": height,
+        "lines": line_values,
+    });
+    serde_json::to_string_pretty(&doc).expect("JSON formatting failed")
+}
+
+/// Default confidence threshold for `--review-json` when no `--mark-low-confidence` is set.
+const REVIEW_DEFAULT_THRESHOLD: f32 = 0.7;
+
+/// Serialize a TextLine for review-JSON: adds `needs_review`, line-level `confidence`,
+/// and per-word `suspected_chars` for words below the threshold.
+fn line_to_review_json(line: &TextLine, threshold: f32) -> serde_json::Value {
+    let line_conf = (line.confidence() * 100.0).round() / 100.0;
+    let word_items: Vec<_> = line
+        .words()
+        .map(|word| {
+            let conf = (word.confidence() * 100.0).round() / 100.0;
+            let needs_review = word.confidence() < threshold;
+            let mut obj = json!({
+                "text": word.to_string(),
+                "confidence": conf,
+                "needs_review": needs_review,
+                "vertices": rounded_vertex_coords(&word.rotated_rect()),
+            });
+            if needs_review {
+                let suspected: Vec<_> = word
+                    .chars()
+                    .iter()
+                    .filter(|c| c.char != ' ' && c.confidence < threshold)
+                    .map(|c| {
+                        let r = c.rect;
+                        json!({
+                            "char": c.char.to_string(),
+                            "confidence": (c.confidence * 100.0).round() / 100.0,
+                            "bbox": {"x": r.left(), "y": r.top(), "width": r.width(), "height": r.height()},
+                        })
+                    })
+                    .collect();
+                obj["suspected_chars"] = json!(suspected);
+            }
+            obj
+        })
+        .collect();
+    json!({
+        "text": line.to_string(),
+        "confidence": line_conf,
+        "needs_review": line.confidence() < threshold,
+        "vertices": rounded_vertex_coords(&line.rotated_rect()),
+        "words": word_items,
+    })
+}
+
+/// Format OCR output as review-JSON: extends standard JSON with per-word `needs_review`
+/// flags and `suspected_chars` lists for words below the confidence threshold.
+///
+/// Pair with `--mark-low-confidence <threshold>` to set a custom threshold (default 0.7).
+pub fn format_review_json_output(args: FormatJsonArgs) -> String {
+    let [height, width] = args.input_hw;
+    let threshold = args.low_confidence_threshold.unwrap_or(REVIEW_DEFAULT_THRESHOLD);
+    let line_items: Vec<_> = args
+        .text_lines
+        .iter()
+        .flatten()
+        .map(|line| line_to_review_json(line, threshold))
+        .collect();
+    let doc = json!({
+        "url": args.input_path,
+        "image_width": width,
+        "image_height": height,
+        "review_threshold": threshold,
+        "paragraphs": [{"lines": serde_json::Value::Array(line_items)}],
+    });
+    serde_json::to_string_pretty(&doc).expect("JSON formatting failed")
 }
 
 fn html_escape(s: &str) -> String {
@@ -538,6 +698,47 @@ pub fn generate_annotated_png(args: GeneratePngArgs) -> NdTensor<f32, 3> {
     annotated_img
 }
 
+/// Overlay per-character confidence as a red→yellow→green heatmap on the input image.
+///
+/// Each character's bounding rect is filled with a semi-transparent color
+/// (alpha=0.6) that maps confidence 0.0→red, 0.5→yellow, 1.0→green.
+/// The original image remains 40% visible beneath the overlay.
+pub fn generate_confidence_heatmap(args: GeneratePngArgs) -> NdTensor<f32, 3> {
+    let GeneratePngArgs {
+        img,
+        line_rects: _,
+        text_lines,
+    } = args;
+    let mut out = img.permuted([2, 0, 1]).map(|p| *p as f32 / 255.0);
+    let [_, height, width] = out.shape();
+    const ALPHA: f32 = 0.6;
+
+    for line in text_lines.iter().flatten() {
+        for c in line.chars() {
+            let conf = c.confidence;
+            // ponytail: red→yellow→green lerp; swap green for blue if color-blind mode needed
+            let color = [
+                if conf < 0.5 { 1.0f32 } else { 2.0 * (1.0 - conf) }, // R
+                if conf > 0.5 { 1.0f32 } else { 2.0 * conf },          // G
+                0.0f32,                                                  // B
+            ];
+            let y0 = (c.rect.top() as usize).min(height);
+            let y1 = (c.rect.bottom() as usize).min(height);
+            let x0 = (c.rect.left() as usize).min(width);
+            let x1 = (c.rect.right() as usize).min(width);
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    for ch in 0..3usize {
+                        let px = out.get_mut([ch, y, x]).expect("in bounds");
+                        *px = *px * (1.0 - ALPHA) + color[ch] * ALPHA;
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs::read_to_string;
@@ -586,6 +787,7 @@ mod tests {
             input_hw: [256, 256],
             text_lines: lines,
             low_confidence_threshold: None,
+            tables: None,
         });
         let parsed_json: serde_json::Value = serde_json::from_str(&json).unwrap();
 
@@ -645,6 +847,7 @@ mod tests {
             input_hw: [80, 600],
             text_lines: lines,
             low_confidence_threshold: None,
+            tables: None,
         });
         assert!(hocr.contains("<?xml"));
         assert!(hocr.contains("ocr_page"));
@@ -667,6 +870,7 @@ mod tests {
             input_hw: [80, 600],
             text_lines: lines,
             low_confidence_threshold: None,
+            tables: None,
         });
         assert!(alto.contains("<?xml"));
         assert!(alto.contains("<alto"));
@@ -688,6 +892,7 @@ mod tests {
             input_hw: [100, 600],
             text_lines: lines,
             low_confidence_threshold: None,
+            tables: None,
         });
         assert!(!hocr.contains(" < "), "raw '<' must be escaped");
         assert!(!hocr.contains(" & "), "raw '&' must be escaped");
@@ -728,6 +933,7 @@ mod tests {
             input_hw: [80, 100],
             text_lines: lines,
             low_confidence_threshold: None,
+            tables: None,
         });
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         let words = &parsed["paragraphs"][0]["lines"][0]["words"];

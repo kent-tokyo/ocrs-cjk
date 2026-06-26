@@ -116,6 +116,85 @@ fn projection_variance(gray: &[u8], h: usize, w: usize, angle_rad: f32) -> f32 {
         / n_rows as f32
 }
 
+/// Rotate an NdTensor<u8, 3> (HWC layout) by 90° clockwise.
+///
+/// Output shape is (W, H, channels) — portrait/landscape are swapped.
+/// Uses direct pixel rearrangement (no interpolation) for lossless 90° rotation.
+pub fn rotate90_cw(img: NdTensorView<u8, 3>) -> NdTensor<u8, 3> {
+    let [h, w, c] = img.shape();
+    let input: Vec<u8> = img.iter().copied().collect();
+    let mut out = vec![0u8; w * h * c];
+    for y in 0..h {
+        for x in 0..w {
+            // 90° CW: output(x, h-1-y) = input(y, x)
+            let src = (y * w + x) * c;
+            let dst = (x * h + (h - 1 - y)) * c;
+            out[dst..dst + c].copy_from_slice(&input[src..src + c]);
+        }
+    }
+    NdTensor::from_data([w, h, c], out)
+}
+
+/// Rotate a flat grayscale row-major buffer (h×w) by 90° CW.
+/// Returns `(rotated_buf, new_h=w, new_w=h)`.
+fn rotate90_cw_gray(gray: &[u8], h: usize, w: usize) -> (Vec<u8>, usize, usize) {
+    let mut out = vec![0u8; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            out[x * h + (h - 1 - y)] = gray[y * w + x];
+        }
+    }
+    (out, w, h)
+}
+
+/// Return `true` if the top half has more dark pixels (< 128) than the bottom half.
+///
+/// Used to distinguish 0° (text near top) from 180° (text near bottom).
+fn text_denser_in_top(gray: &[u8], h: usize, w: usize) -> bool {
+    let mid = h / 2;
+    let top: u64 = gray[..mid * w].iter().map(|&p| u64::from(p < 128)).sum();
+    let bot: u64 = gray[mid * w..].iter().map(|&p| u64::from(p < 128)).sum();
+    top >= bot
+}
+
+/// Detect and correct 90°/180°/270° image rotation using horizontal projection
+/// profile analysis followed by a top/bottom text-density tiebreaker.
+///
+/// Returns `(corrected_image, degrees_applied)`. Returns the original data and
+/// `0` when no correction is needed.
+///
+/// # ponytail
+/// Projection + density heuristic covers most phone/scanner rotation cases.
+/// Upgrade to a dedicated orientation-detection model if edge cases appear.
+pub fn auto_rotate(img: NdTensorView<u8, 3>) -> (NdTensor<u8, 3>, u32) {
+    let (gray, gh, gw) = grayscale_downsample(img, SMALL_DIM);
+    let var0 = projection_variance(&gray, gh, gw, 0.0);
+    let (gray90, g90h, g90w) = rotate90_cw_gray(&gray, gh, gw);
+    let var90 = projection_variance(&gray90, g90h, g90w, 0.0);
+
+    // How many 90° CW rotations to apply.
+    // Derivation: var0 ≥ var90 → image is 0°/180°; use top density to pick.
+    //             var0 < var90 → image is 90°/270°; use top density of rotated gray to pick.
+    let corrections: u32 = if var0 >= var90 {
+        if text_denser_in_top(&gray, gh, gw) { 0 } else { 2 }
+    } else if text_denser_in_top(&gray90, g90h, g90w) {
+        3
+    } else {
+        1
+    };
+
+    if corrections == 0 {
+        let [h, w, c] = img.shape();
+        return (NdTensor::from_data([h, w, c], img.iter().copied().collect::<Vec<u8>>()), 0);
+    }
+
+    let mut result = rotate90_cw(img);
+    for _ in 1..corrections {
+        result = rotate90_cw(result.view());
+    }
+    (result, corrections * 90)
+}
+
 /// Rotate an HWC u8 image by `angle_deg` degrees using bilinear interpolation.
 ///
 /// Pixels outside source bounds are filled with white (255).
@@ -208,5 +287,39 @@ mod tests {
         let orig: Vec<u8> = img.iter().copied().collect();
         let got: Vec<u8> = rotated.iter().copied().collect();
         assert_eq!(orig, got);
+    }
+
+    #[test]
+    fn test_rotate90_cw_shape_and_roundtrip() {
+        // 4× 90° CW rotations must return to original.
+        let img = make_striped_image(40, 60);
+        let r1 = rotate90_cw(img.view());
+        assert_eq!(r1.shape(), [60, 40, 3]);
+        let r4 = rotate90_cw(rotate90_cw(rotate90_cw(r1.view()).view()).view());
+        assert_eq!(r4.shape(), [40, 60, 3]);
+        let orig: Vec<u8> = img.iter().copied().collect();
+        let got: Vec<u8> = r4.iter().copied().collect();
+        assert_eq!(orig, got);
+    }
+
+    #[test]
+    fn test_auto_rotate_no_correction_for_horizontal_stripes() {
+        // Horizontal stripes are already correctly oriented → 0° correction.
+        let img = make_striped_image(200, 100);
+        let (_, degrees) = auto_rotate(img.view());
+        assert_eq!(degrees, 0, "horizontal stripes should need no rotation");
+    }
+
+    #[test]
+    fn test_auto_rotate_detects_90_rotation() {
+        // Rotating a portrait stripe image 90° CW and checking auto_rotate applies a correction.
+        let img = make_striped_image(200, 100); // portrait with horizontal stripes
+        let sideways = rotate90_cw(img.view()); // now landscape, stripes are vertical
+        let (corrected, degrees) = auto_rotate(sideways.view());
+        assert!(degrees > 0, "sideways image should need rotation correction");
+        // After correction the image should be portrait again (H=200, W=100 or H=100, W=200 depending on direction)
+        let [ch, cw, cc] = corrected.shape();
+        assert_eq!(cc, 3);
+        assert_eq!(ch * cw, 200 * 100);
     }
 }

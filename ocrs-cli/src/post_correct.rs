@@ -67,6 +67,37 @@ fn correct_char(c: char, prev: Option<char>, next: Option<char>) -> char {
     }
 }
 
+/// Convert full-width ASCII variants (U+FF01–U+FF5E) to half-width equivalents.
+///
+/// Applies unconditionally to all characters regardless of confidence.
+pub fn normalize_ja(lines: &[Option<TextLine>]) -> Vec<Option<TextLine>> {
+    lines
+        .iter()
+        .map(|line| {
+            line.as_ref().map(|line| {
+                let chars: Vec<TextChar> = line
+                    .chars()
+                    .iter()
+                    .map(|tc| TextChar {
+                        char: normalize_char(tc.char),
+                        ..tc.clone()
+                    })
+                    .collect();
+                TextLine::new(chars)
+            })
+        })
+        .collect()
+}
+
+fn normalize_char(c: char) -> char {
+    // Full-width ASCII variants U+FF01–U+FF5E → half-width U+0021–U+007E
+    if ('\u{FF01}'..='\u{FF5E}').contains(&c) {
+        char::from_u32(c as u32 - 0xFEE0).unwrap_or(c)
+    } else {
+        c
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,5 +174,30 @@ mod tests {
         let input: Vec<Option<TextLine>> = vec![None];
         let result = apply_ja(&input, 0.7);
         assert!(result[0].is_none());
+    }
+
+    #[test]
+    fn test_normalize_fullwidth_ascii() {
+        // Ａ (U+FF21) → A, １ (U+FF11) → 1, ！ (U+FF01) → !
+        let line = make_line(vec![
+            make_char('\u{FF21}', 0.99), // Ａ
+            make_char('\u{FF11}', 0.99), // １
+            make_char('\u{FF01}', 0.99), // ！
+        ]);
+        let result = normalize_ja(&[Some(line)]);
+        let normalized = result[0].as_ref().unwrap().to_string();
+        assert_eq!(normalized, "A1!");
+    }
+
+    #[test]
+    fn test_normalize_preserves_non_fullwidth() {
+        // Regular ASCII and CJK should pass through unchanged
+        let line = make_line(vec![
+            make_char('A', 0.99),
+            make_char('日', 0.99),
+        ]);
+        let result = normalize_ja(&[Some(line)]);
+        let normalized = result[0].as_ref().unwrap().to_string();
+        assert_eq!(normalized, "A日");
     }
 }

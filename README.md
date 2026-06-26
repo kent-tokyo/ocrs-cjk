@@ -225,7 +225,6 @@ ocrs --model-dir models/ input.pdf --output-pdf searchable.pdf --min-confidence 
 
 **Known PDF limitations:**
 
-- PDF JSON/hOCR/ALTO output reports `image_width: 0, image_height: 0` (multi-page PDFs have no single image dimension)
 - The CIDFont has no embedded glyph outlines — the invisible text layer is search/copy-capable but cannot be rendered visibly
 
 ## CLI installation

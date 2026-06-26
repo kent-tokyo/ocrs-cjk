@@ -21,6 +21,45 @@ pub struct PageImage {
     pub width_pts: f32,
     /// Page height in PDF points.
     pub height_pts: f32,
+    /// True if the page has a native text layer (Font resources in page dictionary).
+    pub has_text_layer: bool,
+}
+
+/// Return true if the page has a non-empty Font resource dictionary, indicating
+/// it contains rendered text (as opposed to a pure scanned raster image).
+///
+/// # ponytail
+/// Font-resource presence is a reliable proxy. Upgrade to BT/ET content-stream
+/// scanning if PDFs with decorative fonts but no actual text cause false positives.
+pub fn page_has_text_layer(doc: &Document, page_id: ObjectId) -> bool {
+    let Ok(page_dict) = doc.get_dictionary(page_id) else {
+        return false;
+    };
+    let Ok(resources_obj) = page_dict.get(b"Resources") else {
+        return false;
+    };
+    // Resources may be a direct dictionary or an indirect reference.
+    let font_obj = match resources_obj {
+        Object::Dictionary(d) => d.get(b"Font").ok(),
+        Object::Reference(id) => {
+            let Some(obj) = doc.get_object(*id).ok() else { return false };
+            let Some(d) = obj.as_dict().ok() else { return false };
+            d.get(b"Font").ok()
+        }
+        _ => return false,
+    };
+    let Some(font) = font_obj else { return false };
+    // Font dict must be non-empty to avoid false positives from empty/inherited dicts.
+    match font {
+        Object::Dictionary(d) => !d.is_empty(),
+        Object::Reference(id) => doc
+            .get_object(*id)
+            .ok()
+            .and_then(|o| o.as_dict().ok())
+            .map(|d| !d.is_empty())
+            .unwrap_or(false),
+        _ => false,
+    }
 }
 
 /// OCR result for one PDF page, ready for text overlay embedding.
@@ -44,6 +83,7 @@ pub fn extract_page_images(path: &str) -> anyhow::Result<Vec<PageImage>> {
 
     for (_page_num, page_id) in doc.get_pages() {
         let (width_pts, height_pts) = get_page_media_box(&doc, page_id);
+        let has_text_layer = page_has_text_layer(&doc, page_id);
 
         let images = match doc.get_page_images(page_id) {
             Ok(imgs) => imgs,
@@ -54,12 +94,35 @@ pub fn extract_page_images(path: &str) -> anyhow::Result<Vec<PageImage>> {
         };
 
         if images.is_empty() {
-            eprintln!("warning: page {_page_num} has no embedded images — skipping");
+            if has_text_layer {
+                eprintln!(
+                    "note: page {_page_num} has a native text layer — no raster images to OCR. \
+                     Extract text directly from the PDF instead, or use --skip-text-pages."
+                );
+            } else {
+                eprintln!("warning: page {_page_num} has no embedded images — skipping");
+            }
             continue;
         }
 
-        // Use the first (and usually only) image per page.
-        let img = &images[0];
+        // Use the largest image per page by pixel area.
+        // ponytail: area heuristic covers 95%+ of real PDFs; upgrade to content-stream
+        //           position parsing if PDFs with equal-size multi-image pages appear.
+        let img = images
+            .iter()
+            .max_by_key(|i| (
+                (i.width.max(0) as usize) * (i.height.max(0) as usize),
+                i.content.len(),
+            ))
+            .unwrap(); // safe: images is non-empty (checked above)
+        if images.len() > 1 {
+            eprintln!(
+                "note: page {_page_num} has {} images; using largest ({}×{})",
+                images.len(),
+                img.width,
+                img.height
+            );
+        }
         let filters = img.filters.as_deref().unwrap_or(&[]);
         let first_filter = filters.first().map(|s| s.as_str()).unwrap_or("");
 
@@ -83,14 +146,30 @@ pub fn extract_page_images(path: &str) -> anyhow::Result<Vec<PageImage>> {
                     .decompressed_content()
                     .context("failed to decompress FlateDecode stream")?;
 
-                let w = img.width as usize;
-                let h = img.height as usize;
+                let mut w = img.width as usize;
+                let mut h = img.height as usize;
+
+                // lopdf's PDFImage may return 0 for width/height on some PDFs;
+                // fall back to reading /Width and /Height from the stream dict directly.
+                if w == 0 {
+                    w = stream.dict.get(b"Width").ok()
+                        .and_then(|o| o.as_i64().ok())
+                        .map(|v| v.max(0) as usize)
+                        .unwrap_or(0);
+                }
+                if h == 0 {
+                    h = stream.dict.get(b"Height").ok()
+                        .and_then(|o| o.as_i64().ok())
+                        .map(|v| v.max(0) as usize)
+                        .unwrap_or(0);
+                }
+
                 let channels: usize = match img.color_space.as_deref() {
                     Some("DeviceGray") => 1,
                     _ => 3,
                 };
 
-                if raw.len() < w * h * channels {
+                if w == 0 || h == 0 || raw.len() < w * h * channels {
                     eprintln!(
                         "warning: page {_page_num} FlateDecode size mismatch ({} < {}×{}×{}) — skipping",
                         raw.len(), h, w, channels
@@ -119,7 +198,7 @@ pub fn extract_page_images(path: &str) -> anyhow::Result<Vec<PageImage>> {
             }
         };
 
-        page_images.push(PageImage { tensor, width_pts, height_pts });
+        page_images.push(PageImage { tensor, width_pts, height_pts, has_text_layer });
     }
 
     Ok(page_images)

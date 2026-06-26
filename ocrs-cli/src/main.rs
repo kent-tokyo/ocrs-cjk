@@ -11,17 +11,21 @@ use rten_tensor::{NdTensor, NdTensorView};
 
 mod deskew;
 mod doctor;
+mod furigana;
 mod post_correct;
 mod models;
 use models::{load_model, ModelSource};
 mod output;
+mod table;
 #[cfg(not(target_arch = "wasm32"))]
 mod pdf;
 use output::{
-    format_alto_output, format_alto_pdf_output, format_hocr_output, format_hocr_pdf_output,
-    format_json_output, format_json_pdf_output, format_markdown_output, format_markdown_pdf_output,
-    format_text_output, format_tsv_output, format_tsv_pdf_output, generate_annotated_png,
-    FormatJsonArgs, GeneratePngArgs, OutputFormat, PageInfo,
+    format_alto_output, format_alto_pdf_output, format_blocks_json_output,
+    format_furigana_json_output, format_hocr_output, format_hocr_pdf_output, format_json_output,
+    format_json_pdf_output, format_markdown_output, format_markdown_pdf_output,
+    format_review_json_output, format_text_output, format_tsv_output, format_tsv_pdf_output,
+    generate_annotated_png, generate_confidence_heatmap, FormatJsonArgs, GeneratePngArgs,
+    OutputFormat, PageInfo,
 };
 
 /// Write a CHW image to a PNG file in `path`.
@@ -150,14 +154,29 @@ struct Args {
     /// Confidence threshold for marking low-confidence words in output.
     low_confidence_mark: Option<f32>,
 
+    /// Auto-detect and correct 90°/180°/270° image rotation.
+    auto_rotate: bool,
+
     /// Apply Japanese OCR confusion corrections for chars below this confidence.
     post_correct_ja: Option<f32>,
+
+    /// Convert full-width ASCII variants to half-width.
+    normalize_ja: bool,
 
     /// Filter OCR output to lines intersecting [left, top, width, height].
     region: Option<[i32; 4]>,
 
     /// Filter OCR output to lines containing this text.
     find_text: Option<String>,
+
+    /// Detect table-like text layouts and output as CSV/Markdown/JSON tables.
+    tables: bool,
+
+    /// Save a confidence heatmap PNG (red=low, green=high) to this path.
+    confidence_heatmap: Option<String>,
+
+    /// Skip OCR for PDF pages that have an existing text layer.
+    skip_text_pages: bool,
 }
 
 fn parse_args() -> Result<Args, lexopt::Error> {
@@ -176,6 +195,7 @@ fn parse_args() -> Result<Args, lexopt::Error> {
     let mut min_confidence = None;
     let mut find_text: Option<String> = None;
     let mut post_correct_ja = None;
+    let mut normalize_ja = false;
     let mut region: Option<[i32; 4]> = None;
     let mut model_dir = None;
     let mut output_format = OutputFormat::Text;
@@ -186,6 +206,10 @@ fn parse_args() -> Result<Args, lexopt::Error> {
     let mut text_map = false;
     let mut text_mask = false;
     let mut lang = false;
+    let mut tables = false;
+    let mut confidence_heatmap: Option<String> = None;
+    let mut auto_rotate = false;
+    let mut skip_text_pages = false;
 
     let mut parser = lexopt::Parser::from_env();
     while let Some(arg) = parser.next()? {
@@ -211,6 +235,9 @@ fn parse_args() -> Result<Args, lexopt::Error> {
             }
             Long("deskew") => {
                 deskew = true;
+            }
+            Long("auto-rotate") => {
+                auto_rotate = true;
             }
             Long("detect-model") => {
                 detection_model = Some(parser.value()?.string()?);
@@ -246,6 +273,9 @@ fn parse_args() -> Result<Args, lexopt::Error> {
                     .map_err(|_| "invalid --post-correct-ja value (expected 0.0–1.0)")?;
                 post_correct_ja = Some(v.clamp(0.0, 1.0));
             }
+            Long("normalize-ja") => {
+                normalize_ja = true;
+            }
             Long("mark-low-confidence") => {
                 let v: f32 = parser
                     .value()?
@@ -264,6 +294,12 @@ fn parse_args() -> Result<Args, lexopt::Error> {
             Long("output-pdf") => {
                 output_pdf = Some(parser.value()?.string()?);
             }
+            Long("confidence-heatmap") => {
+                confidence_heatmap = Some(parser.value()?.string()?);
+            }
+            Long("skip-text-pages") => {
+                skip_text_pages = true;
+            }
             Long("alto") => {
                 output_format = OutputFormat::Alto;
             }
@@ -278,6 +314,18 @@ fn parse_args() -> Result<Args, lexopt::Error> {
             }
             Long("tsv") => {
                 output_format = OutputFormat::Tsv;
+            }
+            Long("blocks-json") => {
+                output_format = OutputFormat::BlocksJson;
+            }
+            Long("furigana-separate") => {
+                output_format = OutputFormat::FuriganaJson;
+            }
+            Long("review-json") => {
+                output_format = OutputFormat::ReviewJson;
+            }
+            Long("tables") => {
+                tables = true;
             }
             Short('o') | Long("output") => {
                 output_path = Some(parser.value()?.string()?);
@@ -324,6 +372,12 @@ Options:
 
     Read image from system clipboard
 
+  --auto-rotate
+
+    Detect and correct 90°/180°/270° image rotation before OCR.
+    Uses horizontal projection profile analysis to detect orientation.
+    Apply before --deskew for best results. Use --debug to see correction angle.
+
   --deskew
 
     Detect and correct image skew before OCR (±15°, projection profile).
@@ -344,9 +398,30 @@ Options:
     models on first use (~85 MB each, cached in ~/.cache/ocrs/).
     Explicit --detect-model, --rec-model, or --alphabet flags take precedence.
 
+  --blocks-json
+
+    Output text as a blocks JSON document with reading order numbers and
+    block-level bounding boxes. Each block has: type, reading_order, bbox,
+    text, and lines. Blocks are paragraphs detected by vertical gap analysis.
+    PDF input: not supported.
+
+  --furigana-separate
+
+    Detect and separate furigana (ルビ) from main text. Outputs JSON with
+    \"text\" (main kanji/text) and \"ruby\" (associated kana annotation) per line.
+    Furigana lines are detected by character height ratio and kana proportion.
+    PDF input: not supported.
+
   -j, --json
 
     Output text and structure in JSON format
+
+  --review-json
+
+    Output JSON with per-word confidence, needs_review flags, and suspected_chars
+    for words below the threshold. Combine with --mark-low-confidence to set a
+    custom threshold (default 0.7). Useful for human-in-the-loop OCR workflows.
+    PDF input: not supported.
 
   -m, --markdown
 
@@ -367,9 +442,22 @@ Options:
     hOCR: adds CSS class \"low-confidence\" to ocrx_word spans.
     ALTO: adds QUALITY=\"needs review\" to String elements.
 
+  --normalize-ja
+
+    Convert full-width ASCII variants to half-width (Ａ→A, １→1, ！→!).
+    Applied to all characters regardless of confidence. Can be combined
+    with --post-correct-ja.
+
   -o, --output <path>
 
     Output file path (defaults to stdout)
+
+  --confidence-heatmap <path>
+
+    Save a confidence heatmap PNG to the given path. Each character's bounding
+    box is overlaid with a color from red (low confidence) to green (high
+    confidence) at 60% opacity. Can be combined with any output format.
+    PDF input: not supported (image input only).
 
   -p, --png
 
@@ -378,6 +466,17 @@ Options:
   --rec-model <path>
 
     Use a custom text recognition model
+
+  --skip-text-pages
+
+    Skip OCR for PDF pages that have a native text layer (Font resources).
+    Useful for mixed PDFs containing both scanned and digital pages.
+    Pages with text layers are noted to stderr even without this flag.
+
+  --tables
+
+    Detect table-like text layouts and output as CSV (default), markdown tables
+    (with --markdown), or a \"tables\" array (with --json). PDF input: not supported.
 
   --tsv
 
@@ -490,6 +589,7 @@ Advanced options:
         min_confidence,
         find_text,
         post_correct_ja,
+        normalize_ja,
         region,
         model_dir,
         output_format,
@@ -500,6 +600,10 @@ Advanced options:
         text_mask,
         text_line_images,
         allowed_chars,
+        tables,
+        confidence_heatmap,
+        auto_rotate,
+        skip_text_pages,
     })
 }
 
@@ -653,15 +757,71 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut all_lines: Vec<Option<ocrs_cjk::TextLine>> = Vec::new();
             let mut page_results: Vec<pdf::PageOcrResult> = Vec::new();
 
-            for page in page_images {
-                let [img_h, img_w, _] = page.tensor.shape();
-                let img_src = ImageSource::from_tensor(page.tensor.view(), DimOrder::Hwc)?;
+            for (page_idx, page) in page_images.into_iter().enumerate() {
+                if page.has_text_layer {
+                    if args.skip_text_pages {
+                        eprintln!(
+                            "note: page {} has text layer — skipping OCR (--skip-text-pages)",
+                            page_idx + 1
+                        );
+                        continue;
+                    } else {
+                        eprintln!(
+                            "note: page {} has text layer — OCRing image anyway \
+                             (use --skip-text-pages to skip)",
+                            page_idx + 1
+                        );
+                    }
+                }
+                // Destructure to allow tensor transforms while retaining other fields.
+                let pdf::PageImage {
+                    tensor: page_tensor,
+                    width_pts,
+                    height_pts,
+                    has_text_layer: _,
+                } = page;
+
+                let page_tensor = if args.auto_rotate {
+                    let (corrected, degrees) = deskew::auto_rotate(page_tensor.view());
+                    if args.debug && degrees > 0 {
+                        eprintln!(
+                            "page {}: auto-rotate: applied {}° correction",
+                            page_idx + 1,
+                            degrees
+                        );
+                    }
+                    corrected
+                } else {
+                    page_tensor
+                };
+
+                let page_tensor = if args.deskew {
+                    let (corrected, angle) = deskew::deskew(page_tensor.view());
+                    if args.debug {
+                        eprintln!(
+                            "page {}: deskew: detected {:.1}°, corrected",
+                            page_idx + 1,
+                            angle
+                        );
+                    }
+                    corrected
+                } else {
+                    page_tensor
+                };
+
+                let [img_h, img_w, _] = page_tensor.shape();
+                let img_src = ImageSource::from_tensor(page_tensor.view(), DimOrder::Hwc)?;
                 let ocr_input = engine.prepare_input(img_src)?;
                 let word_rects = engine.detect_words(&ocr_input)?;
                 let line_rects = engine.find_text_lines(&ocr_input, &word_rects);
                 let text_lines = engine.recognize_text(&ocr_input, &line_rects)?;
                 let text_lines = if let Some(t) = args.post_correct_ja {
                     post_correct::apply_ja(&text_lines, t)
+                } else {
+                    text_lines
+                };
+                let text_lines = if args.normalize_ja {
+                    post_correct::normalize_ja(&text_lines)
                 } else {
                     text_lines
                 };
@@ -686,7 +846,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 page_results.push(pdf::PageOcrResult {
                     text_lines: text_lines.clone(),
                     image_hw: [img_h, img_w],
-                    page_wh_pts: [page.width_pts, page.height_pts],
+                    page_wh_pts: [width_pts, height_pts],
                 });
                 all_lines.extend(text_lines);
             }
@@ -728,6 +888,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 OutputFormat::Png => {
                     return Err("--png is not supported for PDF input".into());
                 }
+                OutputFormat::BlocksJson => {
+                    return Err("--blocks-json is not supported for PDF input".into());
+                }
+                OutputFormat::FuriganaJson => {
+                    return Err("--furigana-separate is not supported for PDF input".into());
+                }
+                OutputFormat::ReviewJson => {
+                    return Err("--review-json is not supported for PDF input".into());
+                }
             }
 
             if let Some(ref pdf_out) = args.output_pdf {
@@ -747,6 +916,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         InputSource::File(path) => (load_image_from_file(path)?, path.clone()),
         InputSource::Stdin => (load_image_from_stdin()?, "<stdin>".to_string()),
     };
+
+    if args.auto_rotate {
+        let (corrected, degrees) = deskew::auto_rotate(color_img.view());
+        if args.debug && degrees > 0 {
+            eprintln!("auto-rotate: applied {}° correction", degrees);
+        }
+        color_img = corrected;
+    }
 
     if args.deskew {
         let (corrected, angle) = deskew::deskew(color_img.view());
@@ -789,6 +966,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else {
         line_texts
     };
+    let line_texts = if args.normalize_ja {
+        post_correct::normalize_ja(&line_texts)
+    } else {
+        line_texts
+    };
     let line_texts = if let Some([lx, ty, w, h]) = args.region {
         line_texts
             .into_iter()
@@ -806,6 +988,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         line_texts
     };
 
+    let detected_tables = if args.tables {
+        table::detect_tables(&line_texts)
+    } else {
+        vec![]
+    };
+
     let write_output_str = |content: String| -> Result<(), Box<dyn Error>> {
         if let Some(output_path) = &args.output_path {
             std::fs::write(output_path, content.into_bytes())
@@ -818,7 +1006,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     match args.output_format {
         OutputFormat::Text => {
-            let content = format_text_output(&line_texts, args.low_confidence_mark);
+            let mut content = format_text_output(&line_texts, args.low_confidence_mark);
+            if !detected_tables.is_empty() {
+                content.push_str("\n\n");
+                content.push_str(&table::format_tables_csv(&detected_tables));
+            }
             write_output_str(content)?;
         }
         OutputFormat::Json => {
@@ -827,6 +1019,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 input_hw: color_img.shape()[1..].try_into()?,
                 text_lines: &line_texts,
                 low_confidence_threshold: args.low_confidence_mark,
+                tables: if args.tables { Some(&detected_tables) } else { None },
             });
             write_output_str(content)?;
         }
@@ -849,6 +1042,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 input_hw: color_img.shape()[1..].try_into()?,
                 text_lines: &line_texts,
                 low_confidence_threshold: args.low_confidence_mark,
+                tables: None,
             });
             write_output_str(content)?;
         }
@@ -858,17 +1052,62 @@ fn main() -> Result<(), Box<dyn Error>> {
                 input_hw: color_img.shape()[1..].try_into()?,
                 text_lines: &line_texts,
                 low_confidence_threshold: args.low_confidence_mark,
+                tables: None,
             });
             write_output_str(content)?;
         }
         OutputFormat::Markdown => {
-            let content = format_markdown_output(&line_texts, args.low_confidence_mark);
+            let mut content = format_markdown_output(&line_texts, args.low_confidence_mark);
+            if !detected_tables.is_empty() {
+                content.push('\n');
+                content.push_str(&table::format_tables_markdown(&detected_tables));
+            }
             write_output_str(content)?;
         }
         OutputFormat::Tsv => {
             let content = format_tsv_output(&line_texts, args.low_confidence_mark);
             write_output_str(content)?;
         }
+        OutputFormat::BlocksJson => {
+            let content = format_blocks_json_output(FormatJsonArgs {
+                input_path: &input_path,
+                input_hw: color_img.shape()[1..].try_into()?,
+                text_lines: &line_texts,
+                low_confidence_threshold: args.low_confidence_mark,
+                tables: None,
+            });
+            write_output_str(content)?;
+        }
+        OutputFormat::FuriganaJson => {
+            let content = format_furigana_json_output(FormatJsonArgs {
+                input_path: &input_path,
+                input_hw: color_img.shape()[1..].try_into()?,
+                text_lines: &line_texts,
+                low_confidence_threshold: args.low_confidence_mark,
+                tables: None,
+            });
+            write_output_str(content)?;
+        }
+        OutputFormat::ReviewJson => {
+            let content = format_review_json_output(FormatJsonArgs {
+                input_path: &input_path,
+                input_hw: color_img.shape()[1..].try_into()?,
+                text_lines: &line_texts,
+                low_confidence_threshold: args.low_confidence_mark,
+                tables: None,
+            });
+            write_output_str(content)?;
+        }
+    }
+
+    if let Some(ref heatmap_path) = args.confidence_heatmap {
+        let heatmap = generate_confidence_heatmap(GeneratePngArgs {
+            img: color_img.view(),
+            line_rects: &line_rects,
+            text_lines: &line_texts,
+        });
+        write_image(heatmap_path, heatmap.view())
+            .with_context(|| format!("Failed to write heatmap to {}", heatmap_path))?;
     }
 
     if args.debug {
