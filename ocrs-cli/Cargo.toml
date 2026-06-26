@@ -1,12 +1,15 @@
 [package]
-name = "ocrs-cli"
+name = "ocrs-cjk-cli"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.84"
 authors = ["Robert Knight", "kent-tokyo"]
-description = "OCR CLI tool for extracting text from images, with CJK (Chinese, Japanese, Korean) support"
+description = "CLI for ocrs-cjk: CJK text extraction, searchable PDF, hOCR/ALTO/JSON output."
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/kent-tokyo/ocrs-cjk"
 repository = "https://github.com/kent-tokyo/ocrs-cjk"
+keywords = ["ocr", "cjk", "cli", "pdf", "image"]
+categories = ["command-line-utilities", "computer-vision"]
 
 [dependencies]
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
@@ -15,14 +18,14 @@ serde_json = "1.0.149"
 rten = { workspace = true }
 rten-imageproc = { workspace = true }
 rten-tensor = { workspace = true }
-ocrs = { path = "../ocrs", version = "0.1.0", features = ["rten"] }
+ocrs-cjk = { path = "../ocrs", version = "0.1.0", features = ["rten"] }
 lexopt = "0.3.2"
 url = "2.5.4"
 anyhow = "1.0.102"
 
 [features]
 # Support loading custom models in ONNX format
-onnx = ["ocrs/onnx"]
+onnx = ["ocrs-cjk/onnx"]
 # Support reading images from system clipboard
 clipboard = ["arboard"]
 

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use anyhow::Context;
 use lopdf::content::{Content, Operation};
 use lopdf::{dictionary, Document, Object, ObjectId, Stream, StringFormat};
-use ocrs::TextItem;
+use ocrs_cjk::TextItem;
 use rten_tensor::NdTensor;
 
 /// A raster image extracted from one PDF page, plus the page's dimensions
@@ -25,7 +25,7 @@ pub struct PageImage {
 
 /// OCR result for one PDF page, ready for text overlay embedding.
 pub struct PageOcrResult {
-    pub text_lines: Vec<Option<ocrs::TextLine>>,
+    pub text_lines: Vec<Option<ocrs_cjk::TextLine>>,
     /// [height_pixels, width_pixels] of the source image.
     pub image_hw: [usize; 2],
     /// [width_pts, height_pts] of the PDF page.

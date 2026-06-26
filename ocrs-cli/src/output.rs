@@ -3,7 +3,7 @@ use rten_tensor::prelude::*;
 use rten_tensor::{NdTensor, NdTensorView};
 use serde_json::json;
 
-use ocrs::{TextItem, TextLine};
+use ocrs_cjk::{TextItem, TextLine};
 
 pub enum OutputFormat {
     /// Output a PNG image containing a copy of the input image annotated with
@@ -311,7 +311,7 @@ mod tests {
     use std::io;
     use std::path::PathBuf;
 
-    use ocrs::{TextChar, TextItem, TextLine};
+    use ocrs_cjk::{TextChar, TextItem, TextLine};
     use rten_imageproc::Rect;
     use rten_tensor::prelude::*;
     use rten_tensor::NdTensor;
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_confidence_aggregation() {
-        use ocrs::TextItem;
+        use ocrs_cjk::TextItem;
 
         // Chars with varying confidence: mean should be computed correctly.
         let chars = vec![

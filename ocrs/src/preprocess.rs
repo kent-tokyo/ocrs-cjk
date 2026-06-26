@@ -70,7 +70,7 @@ impl<'a> ImageSource<'a> {
     /// [ImageSource] using:
     ///
     /// ```no_run
-    /// use ocrs::ImageSource;
+    /// use ocrs_cjk::ImageSource;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let image = image::open("image.jpg")?.into_rgb8();

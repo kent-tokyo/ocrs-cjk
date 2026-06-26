@@ -7,6 +7,8 @@ A fork of [ocrs](https://github.com/robertknight/ocrs) extended for CJK (Chinese
 **Languages:** [English](README.md) | [日本語](README_ja.md) | [简体中文](README_zh.md) | [繁體中文](README_zh-tw.md) | [한국어](README_kr.md)
 
 [![CI](https://github.com/kent-tokyo/ocrs-cjk/actions/workflows/ci.yml/badge.svg)](https://github.com/kent-tokyo/ocrs-cjk/actions/workflows/ci.yml)
+[![MSRV](https://img.shields.io/badge/MSRV-1.84-orange)](https://www.rust-lang.org)
+[![crates.io](https://img.shields.io/crates/v/ocrs-cjk.svg)](https://crates.io/crates/ocrs-cjk)
 
 ---
 

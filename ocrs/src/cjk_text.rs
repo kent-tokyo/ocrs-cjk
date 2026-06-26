@@ -85,7 +85,7 @@ impl<'a> Iterator for SegmentIter<'a> {
 /// Whitespace is a split point but is not yielded. CJK and non-CJK runs are separate segments.
 ///
 /// ```
-/// # use ocrs::cjk_text::segment;
+/// # use ocrs_cjk::cjk_text::segment;
 /// let parts: Vec<&str> = segment("Hello 世界!").collect();
 /// assert_eq!(parts, ["Hello", "世界", "!"]);
 /// ```
@@ -123,7 +123,7 @@ pub fn hangul() -> impl Iterator<Item = char> {
 /// Use as `OcrEngineParams { alphabet: Some(cjk_text::cjk_alphabet()), .. }`.
 /// For Korean support, chain [`hangul()`] before collecting:
 /// ```
-/// # use ocrs::cjk_text::{hiragana, katakana, cjk_unified, hangul};
+/// # use ocrs_cjk::cjk_text::{hiragana, katakana, cjk_unified, hangul};
 /// let full: String = hiragana().chain(katakana()).chain(cjk_unified()).chain(hangul()).collect();
 /// ```
 pub fn cjk_alphabet() -> String {

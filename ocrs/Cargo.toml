@@ -1,12 +1,15 @@
 [package]
-name = "ocrs"
+name = "ocrs-cjk"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.84"
 authors = ["Robert Knight", "kent-tokyo"]
-description = "OCR engine with CJK (Chinese, Japanese, Korean) support"
+description = "Pure Rust, offline CJK OCR: PaddleOCR detection, hOCR/ALTO/JSON, WASM-safe."
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/kent-tokyo/ocrs-cjk"
 repository = "https://github.com/kent-tokyo/ocrs-cjk"
+keywords = ["ocr", "cjk", "onnx", "wasm", "pdf"]
+categories = ["computer-vision", "multimedia::images", "text-processing"]
 
 [dependencies]
 anyhow = "1.0.102"

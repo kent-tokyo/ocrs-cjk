@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{BufWriter, IsTerminal, Read};
 
 use anyhow::{anyhow, Context};
-use ocrs::{DecodeMethod, DimOrder, ImageSource, OcrEngine, OcrEngineParams, OcrInput};
+use ocrs_cjk::{DecodeMethod, DimOrder, ImageSource, OcrEngine, OcrEngineParams, OcrInput};
 use rten_imageproc::RotatedRect;
 use rten_tensor::prelude::*;
 use rten_tensor::{NdTensor, NdTensorView};
@@ -496,7 +496,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         if file_path.to_lowercase().ends_with(".pdf") {
             let pdf_path = file_path.clone();
             let page_images = pdf::extract_page_images(&pdf_path)?;
-            let mut all_lines: Vec<Option<ocrs::TextLine>> = Vec::new();
+            let mut all_lines: Vec<Option<ocrs_cjk::TextLine>> = Vec::new();
             let mut page_results: Vec<pdf::PageOcrResult> = Vec::new();
 
             for page in page_images {

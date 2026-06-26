@@ -708,7 +708,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ocrs"
+name = "ocrs-cjk"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -724,7 +724,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ocrs-cli"
+name = "ocrs-cjk-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -733,7 +733,7 @@ dependencies = [
  "image",
  "lexopt",
  "lopdf",
- "ocrs",
+ "ocrs-cjk",
  "png",
  "rten",
  "rten-imageproc",

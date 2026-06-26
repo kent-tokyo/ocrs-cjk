@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::path::PathBuf;
 
-use ocrs::{ImageSource, OcrEngine, OcrEngineParams};
+use ocrs_cjk::{ImageSource, OcrEngine, OcrEngineParams};
 use rten::Model;
 #[allow(unused)]
 use rten_tensor::prelude::*;
